@@ -31,9 +31,7 @@ jobs:
       - name: Install toolchain
         run: |
           set -e
-          brew install ninja llvm libarchive pkg-config go || true
-          brew list llvm >/dev/null 2>&1 || brew install llvm
-          python3 -m pip install --upgrade pip meson
+          brew install ninja llvm libarchive pkg-config go meson
           xcodebuild -downloadComponent MetalToolchain || true
 
       - name: Prepare build-time customization
