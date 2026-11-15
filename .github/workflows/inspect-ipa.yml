@@ -1,7 +1,9 @@
 name: Inspect IPA
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [workbuddy-provider]
+    paths: ['.github/workflows/inspect-ipa.yml']
 
 permissions:
   contents: read
