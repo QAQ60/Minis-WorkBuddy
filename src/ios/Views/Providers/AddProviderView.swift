@@ -364,17 +364,6 @@ struct AddProviderView: View {
                 }
             }
         }
-        .sheet(isPresented: $showWorkBuddyLogin) {
-            // [T-workbuddy-provider] Official external-page sign-in with a
-            // site picker (China / International) inside the sheet.
-            WorkBuddyLoginSheet(instanceId: pendingInstanceId) { success in
-                if success {
-                    oauthAuthTime = Date()
-                    oauthMaskedToken = loadMaskedToken(type: .workBuddy)
-                    pendingOAuthDone = true
-                }
-            }
-        }
         .fileImporter(isPresented: $showImportFile, allowedContentTypes: [.json]) { result in
             handleImport(result)
         }
@@ -899,6 +888,19 @@ struct AddProviderView: View {
                         Text(oauthSignInLabel)
                             .font(.body.weight(.semibold))
                         Spacer()
+                    }
+                }
+                // [T-workbuddy-provider] Sign-in expands inline instead of
+                // presenting a sheet: a container runtime hosts the guest app
+                // in a child window, so `.sheet` silently never appears and
+                // the tap looks dead. An inline panel has nothing to present.
+                if selectedType == .workBuddy && showWorkBuddyLogin {
+                    WorkBuddyLoginPanel(instanceId: pendingInstanceId) { success in
+                        if success {
+                            oauthAuthTime = Date()
+                            oauthMaskedToken = loadMaskedToken(type: .workBuddy)
+                            pendingOAuthDone = true
+                        }
                     }
                 }
             }
