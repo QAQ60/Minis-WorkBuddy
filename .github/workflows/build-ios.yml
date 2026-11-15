@@ -41,37 +41,84 @@ jobs:
              src/ios/Configs/ProviderCustomization.xcconfig
 
       # The native dependency chain (lame → ffmpeg → iSH → rootfs → rclone)
-      # takes 30-60 minutes and its inputs are the pinned submodules plus the
-      # deps/ scripts, so it only needs rebuilding when those change. Without
-      # this cache every commit re-ran the whole chain and risked the job cap.
-      # The paths are the scripts' own output locations.
-      - name: Restore native dep cache
-        id: deps-cache
+      # takes 30-60 minutes and its inputs are the pinned sources, so it only
+      # needs rebuilding when those change. Each dependency gets its own cache
+      # entry keyed on exactly the thing that invalidates it, so a change to
+      # one does not throw away the others. Paths are the scripts' own outputs.
+      - name: Cache lame
         uses: actions/cache@v4
         with:
           path: |
-            deps/libs
-            deps/include
-            deps/resources
             deps/lame-build
-            deps/lame-3.100/build-ios
-            deps/ffmpeg-patch/build-ios
+            deps/lame-3.100
+          key: dep-lame-${{ runner.os }}-${{ hashFiles('deps/build_lame.sh') }}
+
+      - name: Cache ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps/ffmpeg-6.1.2
+            deps/ffmpeg-patch
+          key: dep-ffmpeg-${{ runner.os }}-${{ hashFiles('deps/build_ffmpeg.sh', 'deps/ffmpeg-patch/**') }}
+
+      - name: Cache iSH + rootfs
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps/ish/libs
+            deps/ish/include
+            deps/ish/resources
             deps/ish/build-native
-          key: native-deps-${{ runner.os }}-${{ hashFiles('deps/*.sh', '.gitmodules') }}
-          restore-keys: |
-            native-deps-${{ runner.os }}-
+            deps/resources
+          key: dep-ish-${{ runner.os }}-${{ hashFiles('deps/build_ish.sh', 'deps/prepare_alpine_rootfs.sh', '.gitmodules') }}
+
+      - name: Cache rclone
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps/build
+            deps/frameworks
+          key: dep-rclone-${{ runner.os }}-${{ hashFiles('deps/build_rclone_ios.sh', 'deps/rclone-mobile/go.sum') }}
 
       - name: Build native deps (lame → ffmpeg → ish → rootfs → rclone)
         run: |
           set -e
           export PATH="$(brew --prefix llvm)/bin:$(brew --prefix go)/libexec/bin:$(brew --prefix)/bin:$PATH"
           go version
-          ./deps/build_lame.sh
-          ./deps/build_ffmpeg.sh
-          ./deps/build_ish.sh
-          ./deps/prepare_alpine_rootfs.sh
-          cd deps/rclone-mobile && go get github.com/go-json-experiment/json@latest && go mod tidy && cd ../..
-          ./deps/build_rclone_ios.sh
+          # The deps scripts are NOT incremental: lame runs `make distclean`
+          # and ffmpeg reconfigures every time. So a restored cache is only
+          # worth anything if each finished step is skipped explicitly here.
+          # The sentinel is the artifact the next step actually consumes.
+          if [ -f deps/lame-build/lib/libmp3lame.a ]; then
+            echo "::notice::lame cached — skipping"
+          else
+            ./deps/build_lame.sh
+          fi
+
+          if [ -d deps/ffmpeg-6.1.2/build-ios/install/include ]; then
+            echo "::notice::ffmpeg cached — skipping"
+          else
+            ./deps/build_ffmpeg.sh
+          fi
+
+          if [ -d deps/ish/resources ] && [ -n "$(ls -A deps/ish/resources 2>/dev/null)" ]; then
+            echo "::notice::iSH cached — skipping"
+          else
+            ./deps/build_ish.sh
+          fi
+
+          if [ -d deps/resources/alpine-rootfs/data ] && [ -f deps/resources/alpine-rootfs/meta.db ]; then
+            echo "::notice::alpine rootfs cached — skipping"
+          else
+            ./deps/prepare_alpine_rootfs.sh
+          fi
+
+          if [ -d deps/frameworks/Rclone.xcframework ]; then
+            echo "::notice::rclone cached — skipping"
+          else
+            cd deps/rclone-mobile && go get github.com/go-json-experiment/json@latest && go mod tidy && cd ../..
+            ./deps/build_rclone_ios.sh
+          fi
 
       - name: Build app (unsigned, device)
         run: |
