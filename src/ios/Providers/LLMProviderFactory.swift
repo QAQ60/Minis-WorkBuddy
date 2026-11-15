@@ -439,7 +439,7 @@ enum LLMProviderFactory {
             provider.requiresStreaming = true
             provider.extraHeaders.merge(site.clientHeaders) { _, new in new }
             provider.perRequestHeaders = { _ in
-                WorkBuddyOAuthManager.shared.conversationHeaders(instanceId: iid, site: site)
+                WorkBuddyOAuthManager.makeConversationHeaders(instanceId: iid, site: site)
             }
             provider.chatBodyDecorator = { body in
                 WorkBuddyBodyMend.apply(to: &body)

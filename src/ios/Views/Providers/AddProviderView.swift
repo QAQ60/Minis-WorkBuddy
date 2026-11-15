@@ -1302,6 +1302,8 @@ struct AddProviderView: View {
             return AppLocalized("Sign in with OpenAI Codex")
         case (.antigravity, .oauth):
             return AppLocalized("Sign in with Google for Antigravity Cloud Code")
+        case (.workBuddy, .oauth):
+            return AppLocalized("Scan to sign in with your WorkBuddy (CodeBuddy) account")
         case (.openRouter, .oauth):
             return AppLocalized("Sign in with your OpenRouter account")
         case (.openAIResponses, .oauth):

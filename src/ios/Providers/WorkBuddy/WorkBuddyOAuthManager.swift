@@ -266,6 +266,13 @@ final class WorkBuddyOAuthManager: ObservableObject {
     /// gateway refuses chats without them (HTTP 400), so every Chat
     /// Completions request carries a fresh set.
     func conversationHeaders(instanceId: String, site: WorkBuddySite) -> [String: String] {
+        Self.makeConversationHeaders(instanceId: instanceId, site: site)
+    }
+
+    /// Nonisolated core so per-request header callbacks (invoked on arbitrary
+    /// executors inside the networking layer) can build the header set
+    /// without hopping to the main actor.
+    nonisolated static func makeConversationHeaders(instanceId: String, site: WorkBuddySite) -> [String: String] {
         func hex32() -> String {
             UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         }
