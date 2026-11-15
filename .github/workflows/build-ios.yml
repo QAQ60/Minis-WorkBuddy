@@ -11,7 +11,7 @@ permissions:
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 180
+    timeout-minutes: 240
     steps:
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
@@ -26,6 +26,7 @@ jobs:
           if [ -z "$XC" ]; then XC=$(xcode-select -p); fi
           echo "Using $XC"
           echo "DEVELOPER_DIR=$XC" >> $GITHUB_ENV
+          echo "XCODE_PATH=$XC" >> $GITHUB_ENV
           sudo xcode-select -s "$XC"
 
       - name: Install toolchain
@@ -38,6 +39,27 @@ jobs:
         run: |
           cp src/ios/Configs/ProviderCustomization.xcconfig.example \
              src/ios/Configs/ProviderCustomization.xcconfig
+
+      # The native dependency chain (lame → ffmpeg → iSH → rootfs → rclone)
+      # takes 30-60 minutes and its inputs are the pinned submodules plus the
+      # deps/ scripts, so it only needs rebuilding when those change. Without
+      # this cache every commit re-ran the whole chain and risked the job cap.
+      # The paths are the scripts' own output locations.
+      - name: Restore native dep cache
+        id: deps-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps/libs
+            deps/include
+            deps/resources
+            deps/lame-build
+            deps/lame-3.100/build-ios
+            deps/ffmpeg-patch/build-ios
+            deps/ish/build-native
+          key: native-deps-${{ runner.os }}-${{ hashFiles('deps/*.sh', '.gitmodules') }}
+          restore-keys: |
+            native-deps-${{ runner.os }}-
 
       - name: Build native deps (lame → ffmpeg → ish → rootfs → rclone)
         run: |
@@ -75,20 +97,75 @@ jobs:
           ls -la build/DerivedData/Build/Products/Release-iphoneos/
           echo "--- Minis.app root ---"
           ls -la build/DerivedData/Build/Products/Release-iphoneos/Minis.app/ | head -40
-          echo "--- list all .app dirs ---"
-          find build/DerivedData/Build/Products -maxdepth 2 -name "*.app" -o -maxdepth 2 -name "*.appex"
+          echo "--- embedded binaries ---"
+          find build/DerivedData/Build/Products/Release-iphoneos -name "*.appex" -o -name "*.framework" | head -20
+
+      # Build, sign, then package. An app published with no LC_CODE_SIGNATURE
+      # on the main binary while its frameworks still carry stale signatures
+      # from a previous signing pass is killed by amfid before main() runs —
+      # that is the launch crash this step exists to prevent. Ad-hoc signing
+      # ("-") is enough: sideloading tools re-sign the whole bundle anyway, and
+      # nested code must be self-consistent first.
+      - name: Clean stale signatures and ad-hoc sign
+        run: |
+          set -eo pipefail
+          APP=$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
+          echo "App: $APP"
+
+          # 1. Drop every stale signature so nothing half-signed is left behind.
+          find "$APP" -type d -name "_CodeSignature" -prune -exec rm -rf {} + 2>/dev/null || true
+          find "$APP" -name "CodeResources" -delete 2>/dev/null || true
+
+          # 2. Sign inside-out: deepest nested code first, the app bundle last.
+          #    Frameworks and dylibs.
+          find "$APP/Frameworks" -maxdepth 1 \( -name "*.framework" -o -name "*.dylib" \) 2>/dev/null | while read -r item; do
+            echo "  sign framework: $item"
+            codesign --force --timestamp=none --sign - "$item"
+          done
+          #    Any other loose dylibs in the bundle root.
+          find "$APP" -maxdepth 1 -name "*.dylib" 2>/dev/null | while read -r item; do
+            echo "  sign dylib: $item"
+            codesign --force --timestamp=none --sign - "$item"
+          done
+          #    App extensions, then the host app.
+          find "$APP/PlugIns" -maxdepth 1 -name "*.appex" 2>/dev/null | while read -r item; do
+            echo "  sign appex: $item"
+            codesign --force --timestamp=none --sign - \
+              --preserve-metadata=identifier,entitlements,requirements,flags "$item"
+          done
+          echo "  sign app: $APP"
+          codesign --force --timestamp=none --sign - "$APP"
+
+          # 3. Verify the result actually carries a signature.
+          echo "--- verification ---"
+          codesign --verify --deep --strict --verbose=2 "$APP" || {
+            echo "::error::Ad-hoc signature verification failed"; exit 1; }
+          codesign -dvv "$APP" 2>&1 | head -20
 
       - name: Package IPA
         run: |
           set -e
           APP=$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
           echo "App: $APP"
+          rm -rf build/Payload build/Minis-workbuddy-unsigned.ipa
           mkdir -p build/Payload
-          cp -R "$APP" build/Payload/
+          # ditto preserves symlinks, resource forks and xattrs that `cp -R`
+          # can silently flatten inside frameworks.
+          /usr/bin/ditto "$APP" build/Payload/Minis.app
           cd build
-          zip -qr Minis-workbuddy-unsigned.ipa Payload
+          zip -qry Minis-workbuddy-unsigned.ipa Payload
           cd ..
           ls -l build/Minis-workbuddy-unsigned.ipa
+
+      - name: Verify packaged IPA
+        run: |
+          set -eo pipefail
+          cd build && rm -rf /tmp/ipa-check && mkdir -p /tmp/ipa-check
+          unzip -q Minis-workbuddy-unsigned.ipa -d /tmp/ipa-check
+          test -f /tmp/ipa-check/Payload/Minis.app/Minis
+          codesign --verify --deep --strict --verbose=2 /tmp/ipa-check/Payload/Minis.app
+          ls -la /tmp/ipa-check/Payload/Minis.app/ | head -20
+          echo "IPA verified."
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -107,5 +184,5 @@ jobs:
           fi
           gh release create "$TAG" \
             --title "Minis iOS (unsigned) — WorkBuddy provider" \
-            --notes "Minis iOS build with the WorkBuddy (CodeBuddy) provider: scan-code sign-in for both China (copilot.tencent.com) and international (workbuddy.ai) sites, automatic model discovery, streaming chat. Unsigned IPA - sideload with a tool of your choice (e.g. Sideloadly / AltStore / TrollStore)." \
+            --notes "Minis iOS build with the WorkBuddy (CodeBuddy) provider: scan-code sign-in for both China (copilot.tencent.com) and international (workbuddy.ai) sites, automatic model discovery, streaming chat. Ad-hoc signed IPA — sideload with a tool of your choice (e.g. Sideloadly / AltStore / TrollStore)." \
             build/Minis-workbuddy-unsigned.ipa
