@@ -19,17 +19,13 @@ jobs:
           set -e
           gh release download vworkbuddy-minis -R "$GITHUB_REPOSITORY" -p "*.ipa" -D ipa
           cd ipa
-          ls -l
           python3 - <<'EOF'
           import zipfile
           z = zipfile.ZipFile('Minis-workbuddy-unsigned.ipa')
           names = z.namelist()
           print("TOTAL ENTRIES:", len(names))
-          for n in names[:15]:
-              print(" ", n)
-          tops = [n for n in names if n.count('/') == 1]
-          print("TOP-LEVEL:", tops[:10])
-          plist = [n for n in names if n.endswith('Info.plist') and n.count('/') == 2]
-          print("APP Info.plist:", plist)
-          print("TEST:", z.testzip())
+          for n in sorted(names):
+              if n.count('/') <= 2:
+                  info = z.getinfo(n)
+                  print(f"  {n}  {info.file_size}")
           EOF
