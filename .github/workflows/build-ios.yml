@@ -88,7 +88,5 @@ jobs:
           fi
           gh release create "$TAG" \
             --title "Minis iOS (unsigned) — WorkBuddy provider" \
-            --notes "Minis iOS build with the WorkBuddy (CodeBuddy) provider: scan-code sign-in for both China (copilot.tencent.com) and international (workbuddy.ai) sites, automatic model discovery, streaming chat.
-
-Unsigned IPA — sideload with a tool of your choice (e.g. Sideloadly / AltStore / TrollStore)." \
+            --notes "Minis iOS build with the WorkBuddy (CodeBuddy) provider: scan-code sign-in for both China (copilot.tencent.com) and international (workbuddy.ai) sites, automatic model discovery, streaming chat. Unsigned IPA - sideload with a tool of your choice (e.g. Sideloadly / AltStore / TrollStore)." \
             build/Minis-workbuddy-unsigned.ipa
