@@ -33,7 +33,7 @@ struct WorkBuddyLoginPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Picker(AppLocalized("站点"), selection: $selectedSite) {
+            Picker(AppLocalized("Site"), selection: $selectedSite) {
                 ForEach(WorkBuddySite.allCases, id: \.self) { site in
                     Text(site.displayName).tag(site)
                 }
@@ -48,7 +48,7 @@ struct WorkBuddyLoginPanel: View {
                 } label: {
                     HStack {
                         Spacer()
-                        Text(AppLocalized("打开登录页"))
+                        Text(AppLocalized("Open sign-in page"))
                             .font(.body.weight(.semibold))
                         Spacer()
                     }
@@ -58,7 +58,7 @@ struct WorkBuddyLoginPanel: View {
             case let .awaitingUser(url, siteName):
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text(AppLocalized("正在等待 \(siteName) 登录完成…"))
+                    Text(AppLocalized("Waiting for \(siteName) sign-in…"))
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -71,18 +71,18 @@ struct WorkBuddyLoginPanel: View {
                                 .strokeBorder(Color.secondary.opacity(0.25))
                         )
                 } else {
-                    Text(AppLocalized("正在准备登录页…"))
+                    Text(AppLocalized("Preparing the sign-in page…"))
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
-                Button(AppLocalized("取消登录")) { cancel() }
+                Button(AppLocalized("Cancel sign-in")) { cancel() }
                     .buttonStyle(.bordered)
                     .font(.footnote)
 
             case .success:
                 HStack(spacing: 8) {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                    Text(AppLocalized("已登录 WorkBuddy")).font(.footnote.weight(.semibold))
+                    Text(AppLocalized("Signed in to WorkBuddy")).font(.footnote.weight(.semibold))
                 }
 
             case let .failed(message):
@@ -155,7 +155,7 @@ struct WorkBuddyLoginSheet: View {
                 }
                 .padding()
             }
-            .navigationTitle(AppLocalized("WorkBuddy 登录"))
+            .navigationTitle(AppLocalized("WorkBuddy Sign-In"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

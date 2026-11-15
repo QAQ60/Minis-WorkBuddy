@@ -63,6 +63,22 @@ enum WorkBuddySite: String, Codable, CaseIterable, Sendable {
         "Accept": "application/json",
     ]
 
+    // MARK: - Client identity
+
+    /// The versions the official WorkBuddy clients report. The gateway
+    /// refuses a chat whose User-Agent is not a known client (error 10085),
+    /// so these are load-bearing, not cosmetic — and they must stay in ONE
+    /// place: the model catalog overrides the UA to `CLI/<app> WorkBuddy/<client>`
+    /// (a bare `WorkBuddy/<client>` gets CodeBuddy IDE's config, which carries
+    /// no `cli` agent), so a version bump used to need two coordinated edits.
+    /// Mirrors kwwk's `WorkBuddyOAuth.appVersion` / `clientVersion`.
+    static let appVersion = "2.0.0"
+    static let clientVersion = "5.5.6"
+    static let userAgent = "WorkBuddy/\(clientVersion)"
+    /// The UA that makes `/v3/config` answer with WorkBuddy's own `cli`
+    /// agent (rather than CodeBuddy IDE's config).
+    static let cliUserAgent = "CLI/\(appVersion) \(userAgent)"
+
     /// Client headers the official WorkBuddy desktop app sends on every
     /// request. The gateway refuses a chat whose User-Agent is not a known
     /// client (error 10085), so these are load-bearing, not cosmetic.
@@ -70,12 +86,12 @@ enum WorkBuddySite: String, Codable, CaseIterable, Sendable {
         var headers: [String: String] = [
             "X-Product": "SaaS",
             "X-IDE-Type": "WorkBuddy",
-            "User-Agent": "WorkBuddy/5.5.6",
+            "User-Agent": WorkBuddySite.userAgent,
             "X-Requested-With": "XMLHttpRequest",
             "X-Agent-Intent": "craft",
             "X-Agent-Purpose": "conversation",
             "X-IDE-Name": "WorkBuddy",
-            "X-IDE-Version": "5.5.6",
+            "X-IDE-Version": WorkBuddySite.clientVersion,
         ]
         // Observed only on the international build.
         if self == .international { headers["X-Agent-Type"] = "main" }

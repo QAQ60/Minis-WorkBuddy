@@ -432,9 +432,14 @@ enum LLMProviderFactory {
             instanceId: instance.id, customBaseURL: instance.effectiveCustomBaseURL
         )
         let iid = instance.id
+        // A user-supplied base is a proxy in front of the same site, so the
+        // site still decides the headers and the `/v2` path shape, but the
+        // HOST must be theirs — it is the whole point of the field. The
+        // site's own root is only the fallback.
+        let chatBase = instance.effectiveCustomBaseURL ?? site.chatBaseURL
 
         func configure(_ provider: OpenAIProvider) {
-            provider.customBaseURL = site.chatBaseURL
+            provider.customBaseURL = chatBase
             provider.appendV1Suffix = false
             provider.requiresStreaming = true
             provider.extraHeaders.merge(site.clientHeaders) { _, new in new }
@@ -452,7 +457,7 @@ enum LLMProviderFactory {
             instanceId: instance.id, account: "manual-oauth-token") {
             let provider = applyCustomUserAgent(
                 OpenAIProvider(apiKey: manualToken, model: model,
-                               customBaseURL: site.chatBaseURL, appendV1Suffix: false),
+                               customBaseURL: chatBase, appendV1Suffix: false),
                 instance: instance)
             configure(provider)
             return provider

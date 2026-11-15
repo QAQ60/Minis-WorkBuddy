@@ -11659,6 +11659,23 @@
         }
       }
     },
+    "Cancel sign-in" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel sign-in"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消登录"
+          }
+        }
+      }
+    },
     "Cancel this scheduled task?" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -32197,6 +32214,23 @@
         }
       }
     },
+    "Open sign-in page" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open sign-in page"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开登录页"
+          }
+        }
+      }
+    },
     "Open-ended work that needs its own tool loop: exploring a codebase or the web over many rounds, digesting bulk output into a conclusion, or running independent branches in parallel." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -33511,6 +33545,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "預付餘額"
+          }
+        }
+      }
+    },
+    "Preparing the sign-in page…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preparing the sign-in page…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在准备登录页…"
           }
         }
       }
@@ -42343,6 +42394,40 @@
         }
       }
     },
+    "Sign in with your WorkBuddy / CodeBuddy plan account" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in with your WorkBuddy / CodeBuddy plan account"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用你的 WorkBuddy / CodeBuddy 套餐账号登录"
+          }
+        }
+      }
+    },
+    "Sign in with WorkBuddy" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in with WorkBuddy"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 WorkBuddy 登录"
+          }
+        }
+      }
+    },
     "Sign-in expired. Sign in again to keep using this provider." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -42442,6 +42527,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已登入"
+          }
+        }
+      }
+    },
+    "Signed in to WorkBuddy" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Signed in to WorkBuddy"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已登录 WorkBuddy"
+          }
+        }
+      }
+    },
+    "Site" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Site"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "站点"
           }
         }
       }
@@ -54065,6 +54184,23 @@
         }
       }
     },
+    "Waiting for %@ sign-in…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting for %@ sign-in…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在等待 %@ 登录完成…"
+          }
+        }
+      }
+    },
     "Waiting for another task to finish" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -54902,6 +55038,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "寬度：%@"
+          }
+        }
+      }
+    },
+    "WorkBuddy Sign-In" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "WorkBuddy Sign-In"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "WorkBuddy 登录"
+          }
+        }
+      }
+    },
+    "WorkBuddy (CodeBuddy)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "WorkBuddy (CodeBuddy)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "WorkBuddy（CodeBuddy）"
           }
         }
       }

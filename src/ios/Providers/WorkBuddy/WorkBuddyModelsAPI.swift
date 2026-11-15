@@ -25,13 +25,13 @@ enum WorkBuddyModelsAPI {
             request.setValue(value, forHTTPHeaderField: key)
         }
         // The config that answers depends on this header: WorkBuddy sends
-        // "CLI/<plugin> WorkBuddy/<client>", and a BARE "WorkBuddy/<client>"
+        // "CLI/<app> WorkBuddy/<client>", and a BARE "WorkBuddy/<client>"
         // gets CodeBuddy IDE's config, which carries no `cli` agent — so the
         // model list silently degraded to whatever `data.models` held, a
         // subset that drops models added to the plan (the DeepSeek V4.1
         // tier among them). Verified against kwwk's WorkBuddyModels.fetch,
         // which overrides the client headers for exactly this request.
-        request.setValue("CLI/2.0.0 WorkBuddy/5.5.6", forHTTPHeaderField: "User-Agent")
+        request.setValue(WorkBuddySite.cliUserAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
 
         let (raw, response) = try await URLSession.shared.data(for: request)
@@ -92,19 +92,42 @@ enum WorkBuddyModelsAPI {
             ids.append(contentsOf: details.keys.sorted())
         }
 
-        var models: [LLMModel] = []
+        // Two passes: a name with the plan's credit multiple appended, then
+        // the de-duplication that needs every name before any model is built
+        // (`LLMModel.displayName` is a `let`).
+        var entries: [(id: String, name: String)] = []
+        var detailsByID: [String: [String: Any]] = [:]
         var seen = Set<String>()
         for id in ids where !id.isEmpty && seen.insert(id).inserted {
             let detail = details[id] ?? [:]
-            let name = (detail["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? id
-            let images = (detail["supportsImages"] as? NSNumber)?.boolValue ?? false
-            let efforts = effortTiers(from: detail)
+            let base = (detail["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? id
+            detailsByID[id] = detail
+            entries.append((id, displayedName(base, rate: creditRate(detail["credits"]))))
+        }
+        let names = distinctNames(entries)
+
+        var models: [LLMModel] = []
+        for (index, entry) in entries.enumerated() {
+            let detail = detailsByID[entry.id] ?? [:]
+            // The config marks every model `supportsImages`, but the
+            // international build strips an image sent to its GLM models
+            // server-side and tells the model it was filtered. Listing them
+            // as vision would let the user attach a picture that is silently
+            // discarded — say text-only instead, so the UI can leave it out.
+            let declaresImages = (detail["supportsImages"] as? NSNumber)?.boolValue ?? false
+            let images = declaresImages && !textOnly(site: site, id: entry.id)
             models.append(LLMModel(
-                id: id,
-                displayName: name,
+                id: entry.id,
+                displayName: names[index],
                 provider: "WorkBuddy",
                 modalityOverride: images ? .fullMultimodal : nil,
-                reasoningEffortValues: efforts
+                // The plan's own numbers beat models.dev's guess: the config
+                // names the window this account may actually fill, and asking
+                // for more than it allows is throttled well below the 1M the
+                // catalog advertises.
+                contextWindow: positiveInt(detail["maxInputTokens"]),
+                maxOutputTokens: positiveInt(detail["maxOutputTokens"]),
+                reasoningEffortValues: effortTiers(from: detail)
             ))
         }
         guard !models.isEmpty else {
@@ -113,18 +136,110 @@ enum WorkBuddyModelsAPI {
         return Catalog(models: models, detail: nil)
     }
 
-    /// Effort tiers a model accepts: the model detail's `reasoning`
-    /// dictionary carries `supportedEfforts` (or, on older builds, a plain
-    /// `supportsReasoning` flag mapped onto the standard tier ladder).
-    private static func effortTiers(from detail: [String: Any]) -> [String]? {
+    // MARK: - Field parsing
+
+    /// A model's credits, the multiple WorkBuddy's own picker shows by it:
+    /// "x0.03", "0" or 0. A rate that cannot be read is none.
+    ///
+    /// `x0.00` is the one worth reading aloud — the plan is not charging for
+    /// that model at all, which is why a chat can finish without the balance
+    /// moving.
+    static func creditRate(_ raw: Any?) -> Double? {
+        let text: String
+        switch raw {
+        case let string as String: text = string
+        case let number as NSNumber: text = number.stringValue
+        default: return nil
+        }
+        var digits = Substring(text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+        if digits.hasPrefix("x") { digits = digits.dropFirst() }
+        guard let rate = Double(digits), rate.isFinite, rate >= 0 else { return nil }
+        return rate
+    }
+
+    /// A count the config gave, when it gave a usable one.
+    private static func positiveInt(_ raw: Any?) -> Int? {
+        guard let value = (raw as? NSNumber)?.intValue, value > 0 else { return nil }
+        return value
+    }
+
+    /// `name` with the plan's credit multiple appended, as WorkBuddy's own
+    /// model menu shows it. A free model says so outright.
+    ///
+    /// Kept in the display name rather than a field of its own because the
+    /// rate belongs to a catalog row, not to a request, and the name is what
+    /// the picker, the quota card and the agent all read. The user's own
+    /// rename still wins (it is an override, not this string).
+    static func displayedName(_ name: String, rate: Double?) -> String {
+        guard let rate else { return name }
+        // Two decimals keep x0.03 and x0.00 apart; x1 stays "x1".
+        var text = String(format: "%.2f", rate)
+        while text.contains("."), text.hasSuffix("0") { text.removeLast() }
+        if text.hasSuffix(".") { text.removeLast() }
+        return "\(name) · x\(text)"
+    }
+
+    /// The names to show, with each repeated one distinguished by what its id
+    /// adds to the first holder's ("… (SG)"), or else by its id.
+    static func distinctNames(_ entries: [(id: String, name: String)]) -> [String] {
+        var first: [String: String] = [:]
+        return entries.map { entry in
+            guard let kept = first[entry.name] else {
+                first[entry.name] = entry.id
+                return entry.name
+            }
+            var tag = entry.id
+            if entry.id.hasPrefix(kept + "-"), entry.id.count > kept.count + 1 {
+                tag = String(entry.id.dropFirst(kept.count + 1)).uppercased()
+            }
+            return "\(entry.name) (\(tag))"
+        }
+    }
+
+    /// Whether `site` drops the images sent to a model whatever its config
+    /// says. The international build marks every model `supportsImages`, but
+    /// an image sent to its GLM models is taken out by the server and the
+    /// model is told the content was filtered (verified by kwwk against a
+    /// real account, 2026-10-13). Its other models read images, and so does
+    /// the China build's GLM.
+    static func textOnly(site: WorkBuddySite, id: String) -> Bool {
+        site == .international && id.hasPrefix("glm-")
+    }
+
+    /// Effort tiers a model accepts.
+    ///
+    /// Most configs list them in `reasoning.supportedEfforts`. Some — the fast
+    /// models, deepseek-v4.1-flash, kimi-k3, gemini-3.5-flash — say only
+    /// `supportsReasoning` plus a default `reasoning.effort`; those take low,
+    /// high and max, and their own declared default is added to that ladder
+    /// when it is one of the wider tiers. "none" (thinking off) is offered
+    /// only where the plan allows it: a model marked `onlyReasoning` cannot
+    /// turn thinking off at all, and one whose reasoning block says
+    /// `canDisableThinking: false` refuses it too.
+    static func effortTiers(from detail: [String: Any]) -> [String]? {
         let reasoning = detail["reasoning"] as? [String: Any]
-        if let said = reasoning?["supportedEfforts"] as? [String] {
-            let tiers = said.compactMap { $0.lowercased() }
-            if !tiers.isEmpty { return tiers }
+        var tiers: [String]
+        // An EMPTY declared list is not an answer — several configs ship
+        // `supportedEfforts: []` beside `supportsReasoning: true`, and the
+        // flag is the only thing that says anything there.
+        if let said = reasoning?["supportedEfforts"] as? [String], !said.isEmpty {
+            tiers = said.map { $0.lowercased() }.filter { !$0.isEmpty }
+        } else if (detail["supportsReasoning"] as? NSNumber)?.boolValue == true {
+            let ladder = ["low", "medium", "high", "xhigh", "max"]
+            var taken: Set<String> = ["low", "high", "max"]
+            if let own = reasoning?["effort"] as? String, ladder.contains(own.lowercased()) {
+                taken.insert(own.lowercased())
+            }
+            tiers = ladder.filter { taken.contains($0) }
+        } else {
+            return nil
         }
-        if (detail["supportsReasoning"] as? NSNumber)?.boolValue == true {
-            return ["low", "medium", "high"]
+        guard !tiers.isEmpty else { return nil }
+        let onlyReasoning = (detail["onlyReasoning"] as? NSNumber)?.boolValue == true
+        let canDisable = (reasoning?["canDisableThinking"] as? NSNumber)?.boolValue ?? true
+        if !onlyReasoning, canDisable, !tiers.contains("none") {
+            tiers.insert("none", at: 0)
         }
-        return nil
+        return tiers
     }
 }
