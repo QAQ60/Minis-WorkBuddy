@@ -44,15 +44,40 @@ enum WorkBuddyModelsAPI {
             }
         }
 
-        // The cli agent's list is the picker's catalog.
+        // Collect the site's model ids from everywhere it may list them. The
+        // live config nests the agent surfaces under `data.agent.agents`
+        // (verified against copilot.tencent.com/v3/config), not `data.agents`
+        // as an earlier build assumed — reading only the wrong key left the
+        // catalog with whatever `data.models` happened to carry, which is a
+        // subset and drops models such as the DeepSeek V4.1 tier.
+        //
+        // Order matters: the agent lists are curated (they lead the picker),
+        // the per-model details fill in anything they omit.
         var ids: [String] = []
-        if let agents = data["agents"] as? [[String: Any]] {
-            for agent in agents where (agent["name"] as? String) == "cli" {
-                if let models = agent["models"] as? [String] { ids = models }
+
+        func modelIDs(_ value: Any?) -> [String] {
+            if let plain = value as? [String] { return plain }
+            if let objects = value as? [[String: Any]] { return objects.compactMap { $0["id"] as? String } }
+            return []
+        }
+
+        // Current shape: data.agent.agents[].models
+        if let agentBlock = data["agent"] as? [String: Any] {
+            for surfaces in [agentBlock["agents"], agentBlock["surfaces"]] {
+                if let agents = surfaces as? [[String: Any]] {
+                    for agent in agents { ids.append(contentsOf: modelIDs(agent["models"])) }
+                }
             }
         }
-        // Fallback: some site builds list the models without an agents array.
-        if ids.isEmpty { ids = Array(details.keys).sorted() }
+        // Older shape: data.agents[].models
+        if let agents = data["agents"] as? [[String: Any]] {
+            for agent in agents { ids.append(contentsOf: modelIDs(agent["models"])) }
+        }
+        // Anything else the site declares as available.
+        ids.append(contentsOf: modelIDs(data["availableModels"]))
+        ids.append(contentsOf: modelIDs(data["modelList"]))
+        // Finally every model that carries a detail record.
+        ids.append(contentsOf: details.keys.sorted())
 
         var models: [LLMModel] = []
         var seen = Set<String>()
