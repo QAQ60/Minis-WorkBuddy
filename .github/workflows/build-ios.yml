@@ -59,6 +59,15 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" \
             -derivedDataPath build/DerivedData build | tail -40
 
+      - name: Diagnose products
+        run: |
+          set -e
+          ls -la build/DerivedData/Build/Products/Release-iphoneos/
+          echo "--- Minis.app root ---"
+          ls -la build/DerivedData/Build/Products/Release-iphoneos/Minis.app/ | head -40
+          echo "--- list all .app dirs ---"
+          find build/DerivedData/Build/Products -maxdepth 2 -name "*.app" -o -maxdepth 2 -name "*.appex"
+
       - name: Package IPA
         run: |
           set -e
