@@ -57,7 +57,9 @@ jobs:
           xcodebuild -project src/ios/Minis.xcodeproj -scheme Minis \
             -configuration Release -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" \
-            -derivedDataPath build/DerivedData build | tail -40
+            -derivedDataPath build/DerivedData build > build/xcodebuild.log 2>&1 \
+            || { grep -B2 -A4 -E "error:" build/xcodebuild.log | head -120; exit 1; }
+          tail -3 build/xcodebuild.log
 
       - name: Diagnose products
         run: |
