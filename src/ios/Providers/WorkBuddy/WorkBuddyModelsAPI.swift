@@ -24,6 +24,14 @@ enum WorkBuddyModelsAPI {
         for (key, value) in site.accountHeaders(uid: nil, domain: nil, enterpriseId: nil) {
             request.setValue(value, forHTTPHeaderField: key)
         }
+        // The config that answers depends on this header: WorkBuddy sends
+        // "CLI/<plugin> WorkBuddy/<client>", and a BARE "WorkBuddy/<client>"
+        // gets CodeBuddy IDE's config, which carries no `cli` agent — so the
+        // model list silently degraded to whatever `data.models` held, a
+        // subset that drops models added to the plan (the DeepSeek V4.1
+        // tier among them). Verified against kwwk's WorkBuddyModels.fetch,
+        // which overrides the client headers for exactly this request.
+        request.setValue("CLI/2.0.0 WorkBuddy/5.5.6", forHTTPHeaderField: "User-Agent")
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
 
         let (raw, response) = try await URLSession.shared.data(for: request)
@@ -44,15 +52,14 @@ enum WorkBuddyModelsAPI {
             }
         }
 
-        // Collect the site's model ids from everywhere it may list them. The
-        // live config nests the agent surfaces under `data.agent.agents`
-        // (verified against copilot.tencent.com/v3/config), not `data.agents`
-        // as an earlier build assumed — reading only the wrong key left the
-        // catalog with whatever `data.models` happened to carry, which is a
-        // subset and drops models such as the DeepSeek V4.1 tier.
-        //
-        // Order matters: the agent lists are curated (they lead the picker),
-        // the per-model details fill in anything they omit.
+        // Collect the site's model ids. The config answers with the agent
+        // surfaces under `data.agents` — but only when the request looks like
+        // WorkBuddy's own CLI (see the User-Agent set above). Asked as a bare
+        // WorkBuddy client, the same endpoint returns CodeBuddy IDE's config
+        // (`data.agent.agents`, no "cli" agent), and the list degraded to
+        // `data.models`, a subset that drops models the plan adds — the
+        // DeepSeek V4.1 tier among them. Both nestings are read here so the
+        // parser survives either answer.
         var ids: [String] = []
 
         func modelIDs(_ value: Any?) -> [String] {
@@ -61,23 +68,29 @@ enum WorkBuddyModelsAPI {
             return []
         }
 
-        // Current shape: data.agent.agents[].models
+        // Every agent surface the config may nest them under.
+        var agentSurfaces: [[String: Any]] = []
+        if let agents = data["agents"] as? [[String: Any]] { agentSurfaces += agents }
         if let agentBlock = data["agent"] as? [String: Any] {
-            for surfaces in [agentBlock["agents"], agentBlock["surfaces"]] {
-                if let agents = surfaces as? [[String: Any]] {
-                    for agent in agents { ids.append(contentsOf: modelIDs(agent["models"])) }
-                }
-            }
+            if let agents = agentBlock["agents"] as? [[String: Any]] { agentSurfaces += agents }
+            if let surfaces = agentBlock["surfaces"] as? [[String: Any]] { agentSurfaces += surfaces }
         }
-        // Older shape: data.agents[].models
-        if let agents = data["agents"] as? [[String: Any]] {
-            for agent in agents { ids.append(contentsOf: modelIDs(agent["models"])) }
+
+        // The "cli" agent's list is WorkBuddy's own picker and the authority
+        // on what this plan may use, so when it is present nothing else is
+        // mixed in. Only a config without one falls back to a union.
+        let cliModels = agentSurfaces
+            .first { ($0["name"] as? String) == "cli" }
+            .map { modelIDs($0["models"]) } ?? []
+
+        if !cliModels.isEmpty {
+            ids = cliModels
+        } else {
+            for agent in agentSurfaces { ids.append(contentsOf: modelIDs(agent["models"])) }
+            ids.append(contentsOf: modelIDs(data["availableModels"]))
+            ids.append(contentsOf: modelIDs(data["modelList"]))
+            ids.append(contentsOf: details.keys.sorted())
         }
-        // Anything else the site declares as available.
-        ids.append(contentsOf: modelIDs(data["availableModels"]))
-        ids.append(contentsOf: modelIDs(data["modelList"]))
-        // Finally every model that carries a detail record.
-        ids.append(contentsOf: details.keys.sorted())
 
         var models: [LLMModel] = []
         var seen = Set<String>()
