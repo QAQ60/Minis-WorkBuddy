@@ -62,6 +62,13 @@ jobs:
             || { grep -B2 -A4 -E "error:" build/xcodebuild.log | head -120; exit 1; }
           tail -3 build/xcodebuild.log
 
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: build/xcodebuild.log
+
       - name: Diagnose products
         run: |
           set -e
