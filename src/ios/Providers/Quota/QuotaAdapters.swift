@@ -75,6 +75,9 @@ enum QuotaVendorDetector {
         case .xAI: return .xAI
         case .kimiCode: return .kimiCode
         case .githubCopilot: return .githubCopilot
+        // WorkBuddy's usage is not exposed on a public quota endpoint yet;
+        // no adapter — "unknown" keeps the quota screen honest.
+        case .workBuddy: return .unknown
         case .unsupported: return .unknown
         }
     }

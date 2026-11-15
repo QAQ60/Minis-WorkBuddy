@@ -164,6 +164,25 @@ final class OpenAIProvider: LLMProvider {
     /// request builders stay free of provider-specific branching.
     var perRequestHeaders: (@Sendable ([String: Any]) -> [String: String])?
 
+    /// [T-workbuddy-mandatory-stream] When true, every Chat Completions
+    /// request is forced to `stream: true` (and `stream_options` dropped),
+    /// and `sendMessage` transparently routes through `sendMessageViaStream`
+    /// so callers asking for "one response" still get one.
+    ///
+    /// WorkBuddy's gateway only serves SSE — a non-streaming chat is refused
+    /// with HTTP 400 ("Non-stream chat request is currently not supported").
+    /// Same shape of problem as the Codex OAuth branch below, but as an
+    /// explicit provider-level flag rather than a customBaseURL sniff, so a
+    /// user-supplied WorkBuddy proxy base keeps working.
+    var requiresStreaming: Bool = false
+
+    /// [T-workbuddy-body-mend] Decorator applied to every Chat Completions
+    /// body right before it is serialized. WorkBuddy needs its gateway's
+    /// mends (system-first messages, string `tool_choice`); keeping it a
+    /// closure mirrors `perRequestHeaders` so the shared builders stay free
+    /// of provider-specific branching.
+    var chatBodyDecorator: (@Sendable (inout [String: Any]) -> Void)?
+
     /// [T-model-use-image-passthrough GH#62] Arbitrary extra fields merged into the
     /// /images/generations JSON body, so `minis-model-use` can pass provider-specific
     /// params our fixed schema never modeled (e.g. Volcengine Seedream's `image` for
@@ -568,6 +587,18 @@ final class OpenAIProvider: LLMProvider {
         temperature: Double?
     ) async throws -> LLMResponse {
         let useChat = usesChatCompletionsAPI
+
+        // [T-workbuddy-mandatory-stream] Same bridge as the Codex branch
+        // below: a backend that refuses stream=false still answers callers
+        // that want one response — we just stream and concatenate.
+        if requiresStreaming {
+            return try await sendMessageViaStream(
+                messages: messages,
+                systemPrompt: systemPrompt,
+                maxTokens: maxTokens,
+                temperature: temperature
+            )
+        }
 
         // [T-codex-oauth-mandatory-stream] Codex OAuth backend rejects
         // every non-streaming request — transparently upgrade to stream.
@@ -1230,6 +1261,14 @@ final class OpenAIProvider: LLMProvider {
             for (k, v) in chatExtraBody { body[k] = v }
             body["model"] = model.id
         }
+        // [T-workbuddy-mandatory-stream] The gateway refuses stream=false and
+        // does not know OpenAI's stream_options. Applied after chatExtraBody
+        // so a user passthrough can't accidentally downgrade the request.
+        if requiresStreaming {
+            body["stream"] = true
+            body.removeValue(forKey: "stream_options")
+        }
+        chatBodyDecorator?(&body)
 
         // [T-ios-openai-body-oom] See streamRaw — carries the conversation too.
         try guardRequestBodySize(body, context: "chatCompletions")

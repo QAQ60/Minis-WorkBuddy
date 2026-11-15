@@ -78,6 +78,8 @@ enum LLMProviderFactory {
             return openCode(makeKimiProvider(instance: instance, model: entry.model))
         case .githubCopilot:
             return openCode(makeCopilotProvider(instance: instance, model: entry.model))
+        case .workBuddy:
+            return openCode(makeWorkBuddyProvider(instance: instance, model: entry.model))
         case .unsupported:
             throw FactoryError.voiceOnlyProvider
         }
@@ -419,6 +421,49 @@ enum LLMProviderFactory {
             provider.appendV1Suffix = appendV1
             return provider
         }
+    }
+
+    /// [T-workbuddy-provider] WorkBuddy rides `OpenAIProvider` with the site's
+    /// chat base (`<endpoint>/v2`, no `/v1`), the official client's headers,
+    /// per-request conversation id headers, mandatory streaming and the
+    /// gateway's body mends. See `WorkBuddySite` / `WorkBuddyOAuthManager`.
+    static func makeWorkBuddyProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {
+        let site = WorkBuddyOAuthManager.shared.site(
+            instanceId: instance.id, customBaseURL: instance.effectiveCustomBaseURL
+        )
+        let iid = instance.id
+
+        func configure(_ provider: OpenAIProvider) {
+            provider.customBaseURL = site.chatBaseURL
+            provider.appendV1Suffix = false
+            provider.requiresStreaming = true
+            provider.extraHeaders.merge(site.clientHeaders) { _, new in new }
+            provider.perRequestHeaders = { _ in
+                WorkBuddyOAuthManager.shared.conversationHeaders(instanceId: iid, site: site)
+            }
+            provider.chatBodyDecorator = { body in
+                WorkBuddyBodyMend.apply(to: &body)
+            }
+        }
+
+        // A manually-pasted bearer token is honoured exactly like the xAI /
+        // Kimi branches do ("Or Configure Manually" relays).
+        if let manualToken = ProviderKeychainHelper.loadOAuthString(
+            instanceId: instance.id, account: "manual-oauth-token") {
+            let provider = applyCustomUserAgent(
+                OpenAIProvider(apiKey: manualToken, model: model,
+                               customBaseURL: site.chatBaseURL, appendV1Suffix: false),
+                instance: instance)
+            configure(provider)
+            return provider
+        }
+
+        let provider = OpenAIProvider(
+            oauthTokenProvider: { try await WorkBuddyOAuthManager.shared.validAccessToken(instanceId: iid) },
+            model: model
+        )
+        configure(provider)
+        return provider
     }
 
     static func makeXAIProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {

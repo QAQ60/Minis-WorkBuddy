@@ -25,6 +25,13 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
     /// flows through OpenAIProvider like xAI/Kimi. Opt-in, warned about in the
     /// sign-in UI, and hideable via CopilotConstants.isEnabled.
     case githubCopilot
+    /// [T-workbuddy-provider] WorkBuddy (the Tencent CodeBuddy plan) via its
+    /// OFFICIAL sign-in: an external authorization page + credential polling.
+    /// OpenAI-compatible chat upstream — flows through OpenAIProvider with a
+    /// custom base URL + OAuth bearer, like xAI/Kimi. The site (China vs
+    /// International) is chosen in the sign-in sheet and persisted per
+    /// instance in the Keychain.
+    case workBuddy
     /// Sentinel for a provider type this app build doesn't recognize — e.g. a
     /// NEWER build synced an instance whose `provider_type` string isn't a known
     /// case here. We DECODE to this instead of throwing/dropping, so the instance
@@ -50,6 +57,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .xAI: return "xAI (Grok)"
         case .kimiCode: return "Kimi Code"
         case .githubCopilot: return "GitHub Copilot"
+        case .workBuddy: return "WorkBuddy (CodeBuddy)"
         case .unsupported: return "Unsupported"
         }
     }
@@ -75,7 +83,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
     /// back at the catalog already seeded.
     var oauthSupportsModelDiscovery: Bool {
         switch self {
-        case .anthropic, .gemini, .antigravity, .openRouter, .xAI, .kimiCode, .githubCopilot:
+        case .anthropic, .gemini, .antigravity, .openRouter, .xAI, .kimiCode, .githubCopilot, .workBuddy:
             // These OAuth branches all reach a real /models endpoint.
             return true
         case .openAI:
@@ -106,6 +114,9 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         // (`model_picker_enabled`), never a compiled-in guess that would go
         // stale and offer models the account cannot use.
         case .githubCopilot: return []
+        // The catalog lives in the site's /v3/config — discovered live after
+        // sign-in, never compiled in (it rotates with the plan).
+        case .workBuddy: return []
         case .unsupported: return []
         }
     }
@@ -130,6 +141,8 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
             return AppLocalized("Sign in with your Kimi Code / Coding Plan subscription")
         case .githubCopilot:
             return AppLocalized("Sign in with GitHub — unofficial, use at your own risk")
+        case .workBuddy:
+            return AppLocalized("Sign in with your WorkBuddy / CodeBuddy plan account")
         case .antigravity:
             return AppLocalized("\(builtInModels.count) built-in models")
         case .unsupported:
@@ -149,6 +162,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .xAI: return .vision
         case .kimiCode: return .vision
         case .githubCopilot: return .vision
+        case .workBuddy: return .vision
         case .unsupported: return .vision
         }
     }

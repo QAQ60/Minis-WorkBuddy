@@ -179,6 +179,7 @@ struct AddProviderView: View {
     @State private var showKimiLogin = false
     /// [T-copilot-provider] Same device-code shape as Kimi's.
     @State private var showCopilotLogin = false
+    @State private var showWorkBuddyLogin = false
     @State private var oauthAuthTime: Date?
     @State private var showDataSharingConsent = false
     @State private var showImportFile = false
@@ -359,6 +360,17 @@ struct AddProviderView: View {
                 if success {
                     oauthAuthTime = Date()
                     oauthMaskedToken = loadMaskedToken(type: .githubCopilot)
+                    pendingOAuthDone = true
+                }
+            }
+        }
+        .sheet(isPresented: $showWorkBuddyLogin) {
+            // [T-workbuddy-provider] Official external-page sign-in with a
+            // site picker (China / International) inside the sheet.
+            WorkBuddyLoginSheet(instanceId: pendingInstanceId) { success in
+                if success {
+                    oauthAuthTime = Date()
+                    oauthMaskedToken = loadMaskedToken(type: .workBuddy)
                     pendingOAuthDone = true
                 }
             }
@@ -876,6 +888,8 @@ struct AddProviderView: View {
                         showKimiLogin = true
                     } else if selectedType == .githubCopilot {
                         showCopilotLogin = true
+                    } else if selectedType == .workBuddy {
+                        showWorkBuddyLogin = true
                     } else {
                         Task { await startOAuth() }
                     }
@@ -992,6 +1006,7 @@ struct AddProviderView: View {
         case .xAI: return "https://api.x.ai/v1"
         case .kimiCode: return "https://api.kimi.com/coding"
         case .githubCopilot: return CopilotConstants.apiBaseURL
+        case .workBuddy: return "https://copilot.tencent.com/v2"
         default: return "https://api.example.com"
         }
     }
@@ -1080,6 +1095,7 @@ struct AddProviderView: View {
             // [T-copilot-provider] Same shape — the device flow lives in
             // CopilotDeviceLoginSheet so the risk notice is shown before it starts.
             case .githubCopilot: break
+            case .workBuddy: break // external-page flow runs in WorkBuddyLoginSheet
             case .unsupported: break // free / unsupported — no OAuth
             }
             oauthAuthTime = Date()
@@ -1115,6 +1131,8 @@ struct AddProviderView: View {
             // The GitHub token is the credential worth showing; the session
             // token is derived and rotates every ~25 minutes.
             token = ProviderKeychainHelper.loadOAuthToken(instanceId: pendingInstanceId, as: CopilotTokenStorage.self)?.githubToken
+        case .workBuddy:
+            token = ProviderKeychainHelper.loadOAuthToken(instanceId: pendingInstanceId, as: WorkBuddyTokenStorage.self)?.accessToken
         case .unsupported:
             token = nil // free / unsupported — no token
         }
@@ -1195,6 +1213,7 @@ struct AddProviderView: View {
         case .xAI: return AppLocalized("Sign in with xAI")
         case .kimiCode: return AppLocalized("Sign in with Kimi Code")
         case .githubCopilot: return AppLocalized("Sign in with GitHub")
+        case .workBuddy: return AppLocalized("Sign in with WorkBuddy")
         case .unsupported: return AppLocalized("Sign In")
         }
     }
@@ -1211,6 +1230,7 @@ struct AddProviderView: View {
         case .xAI: return "xai-..."
         case .kimiCode: return "" // OAuth only
         case .githubCopilot: return "" // OAuth only
+        case .workBuddy: return "" // OAuth only
         case .unsupported: return ""
         }
     }
@@ -1226,6 +1246,7 @@ struct AddProviderView: View {
         case .xAI: return "xAI (Grok)"
         case .kimiCode: return "Kimi Code"
         case .githubCopilot: return "GitHub Copilot"
+        case .workBuddy: return "WorkBuddy (CodeBuddy)"
         case .unsupported: return AppLocalized("Unsupported")
         }
     }
@@ -1255,6 +1276,8 @@ struct AddProviderView: View {
         // cannot use is worse than offering none: it looks like the supported
         // path and fails with no explanation.
         case .githubCopilot:
+            return [.oauth]
+        case .workBuddy:
             return [.oauth]
         case .openAIResponses, .gemini:
             return [.apiKey]
@@ -1328,6 +1351,9 @@ struct AddProviderView: View {
         case .githubCopilot:
             Image(systemName: "chevron.left.forwardslash.chevron.right")
                 .foregroundStyle(.primary)
+        case .workBuddy:
+            Image(systemName: "b.circle")
+                .foregroundStyle(.teal)
         case .unsupported:
             Image(systemName: "questionmark.circle")
                 .foregroundStyle(.gray)
@@ -1345,6 +1371,7 @@ struct AddProviderView: View {
         case .xAI: return .gray
         case .kimiCode: return .indigo
         case .githubCopilot: return .primary
+        case .workBuddy: return .teal
         case .unsupported: return .gray
         }
     }

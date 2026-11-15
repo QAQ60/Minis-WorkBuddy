@@ -1387,6 +1387,8 @@ final class ProviderConfigStore: ObservableObject {
                 return ProviderKeychainHelper.loadOAuthToken(instanceId: instanceId, as: XAITokenStorage.self).flatMap { try? JSONEncoder().encode($0) }
             case .kimiCode:
                 return ProviderKeychainHelper.loadOAuthToken(instanceId: instanceId, as: KimiTokenStorage.self).flatMap { try? JSONEncoder().encode($0) }
+            case .workBuddy:
+                return ProviderKeychainHelper.loadOAuthToken(instanceId: instanceId, as: WorkBuddyTokenStorage.self).flatMap { try? JSONEncoder().encode($0) }
             default:
                 return nil
             }
@@ -1520,6 +1522,10 @@ final class ProviderConfigStore: ObservableObject {
                 }
             case .kimiCode:
                 if let t = try? JSONDecoder().decode(KimiTokenStorage.self, from: blob) {
+                    ProviderKeychainHelper.saveOAuthToken(t, instanceId: instance.id)
+                }
+            case .workBuddy:
+                if let t = try? JSONDecoder().decode(WorkBuddyTokenStorage.self, from: blob) {
                     ProviderKeychainHelper.saveOAuthToken(t, instanceId: instance.id)
                 }
             default:
@@ -3289,6 +3295,24 @@ final class ProviderConfigStore: ObservableObject {
             let kimiBase = customBase ?? "https://api.kimi.com/coding"
             let kimiAppendV1 = customBase == nil ? true : appendV1  // default base …/coding needs /v1 appended
             return try await OpenAIModelsAPI.fetchModels(apiKey: token, baseURL: kimiBase, appendV1Suffix: kimiAppendV1, forceRefresh: forceRefresh, userAgent: nil)
+        case (.workBuddy, .apiKey):
+            // OAuth-only upstream — an API-key instance is a misconfiguration.
+            throw ModelRefreshError.noCredential
+        case (.workBuddy, .oauth):
+            // Manual relay token wins, mirroring the other OAuth branches.
+            let site = WorkBuddyOAuthManager.shared.site(
+                instanceId: instance.id, customBaseURL: customBase)
+            if let manualToken = ProviderKeychainHelper.loadOAuthString(
+                instanceId: instance.id, account: "manual-oauth-token") {
+                let catalog = try await WorkBuddyModelsAPI.fetchModels(accessToken: manualToken, site: site)
+                return catalog.models
+            }
+            let token = try await WorkBuddyOAuthManager.shared.validAccessToken(instanceId: instance.id)
+            let catalog = try await WorkBuddyModelsAPI.fetchModels(accessToken: token, site: site)
+            if let detail = catalog.detail, catalog.models.isEmpty {
+                throw ModelRefreshError.noCredential
+            }
+            return catalog.models
         case (.githubCopilot, _):
             // [T-copilot-provider] Always the OAuth path — there is no API-key
             // form of Copilot. The session token is minted on demand, so a
@@ -3477,6 +3501,10 @@ final class ProviderConfigStore: ObservableObject {
         case .xAI: return "https://api.x.ai"
         case .kimiCode: return "https://api.kimi.com/coding"
         case .githubCopilot: return CopilotConstants.apiBaseURL
+        case .workBuddy:
+            return WorkBuddyOAuthManager.shared.site(
+                instanceId: instance.id, customBaseURL: instance.effectiveCustomBaseURL
+            ).chatBaseURL
         case .gemini: return "https://generativelanguage.googleapis.com"
         case .openRouter: return "https://openrouter.ai/api"
         case .antigravity: return nil // No public base URL

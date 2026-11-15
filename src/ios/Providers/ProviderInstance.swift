@@ -355,6 +355,10 @@ struct ProviderInstance: Identifiable, Codable, Hashable {
             return ProviderKeychainHelper.loadOAuthToken(
                 instanceId: id, as: CopilotTokenStorage.self, caller: "hasAnyCredential"
             )?.githubToken.isEmpty == false
+        case .workBuddy:
+            return ProviderKeychainHelper.loadOAuthToken(
+                instanceId: id, as: WorkBuddyTokenStorage.self, caller: "hasAnyCredential"
+            ) != nil
         case .antigravity, .openRouter, .unsupported:
             // unsupported = synced from a newer build; no usable credential here.
             // antigravity stores its token via AntigravityOAuthManager (no

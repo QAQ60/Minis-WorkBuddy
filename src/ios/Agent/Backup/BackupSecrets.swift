@@ -181,6 +181,9 @@ enum BackupSecretsCollector {
         case .kimiCode:
             return ProviderKeychainHelper.loadOAuthToken(instanceId: id, as: KimiTokenStorage.self)
                 .flatMap { try? JSONEncoder().encode($0) }
+        case .workBuddy:
+            return ProviderKeychainHelper.loadOAuthToken(instanceId: id, as: WorkBuddyTokenStorage.self)
+                .flatMap { try? JSONEncoder().encode($0) }
         case .githubCopilot:
             // [T-copilot-backup-token] Without this the `default` below swallowed
             // Copilot, so a restored install lost the sign-in — while the login
