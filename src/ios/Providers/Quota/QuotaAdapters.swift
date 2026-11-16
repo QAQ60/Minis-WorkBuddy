@@ -898,6 +898,12 @@ enum QuotaConsoleLink {
         // [ISS-031] The "console" link of opencode.ai/docs/go ("You can track
         // your current usage in the console").
         case .openCode: raw = "https://opencode.ai/auth"
+        // [T-workbuddy-quota] The account page the plan's own docs point at:
+        // avatar › 个人中心 › 套餐与用量, which draws the same meter the adapter
+        // reads (and the per-task detail the meter does not carry).
+        case .workBuddy:
+            raw = host.contains("workbuddy.ai") ? "https://www.workbuddy.ai/account/usage"
+                                                : "https://www.workbuddy.cn/account/usage"
         case .siliconFlow, .geminiAPIKey, .geminiCodeAssist, .antigravity, .xAI, .githubCopilot,
              .customRelay, .unknown:
             raw = nil
