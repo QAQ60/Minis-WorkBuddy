@@ -27,7 +27,7 @@ import Foundation
 struct QuotaInstanceDescriptor: Sendable, Equatable {
     enum ProviderKind: String, Sendable {
         case openAI, anthropic, gemini, antigravity, openRouter, openAIResponses
-        case xAI, kimiCode, githubCopilot, unsupported
+        case xAI, kimiCode, githubCopilot, workBuddy, unsupported
     }
 
     var instanceId: String
@@ -75,9 +75,9 @@ enum QuotaVendorDetector {
         case .xAI: return .xAI
         case .kimiCode: return .kimiCode
         case .githubCopilot: return .githubCopilot
-        // WorkBuddy's usage is not exposed on a public quota endpoint yet;
-        // no adapter — its ProviderKind decodes to `.unsupported`, which
-        // maps to "unknown" and keeps the quota screen honest.
+        // WorkBuddy: the plan meters through its own billing endpoint, which
+        // returns credits (not money, not tokens), so it has a real adapter.
+        case .workBuddy: return .workBuddy
         case .unsupported: return .unknown
         }
     }
@@ -112,11 +112,24 @@ protocol QuotaHTTPTransport: Sendable {
     /// `headers` are extra request headers (e.g. the Claude CLI fingerprint);
     /// never logged.
     func get(_ url: URL, bearer: String, headers: [String: String]) async throws -> QuotaHTTPResponse
+
+    /// [T-workbuddy-quota] A POST with a JSON body, for the vendors that meter
+    /// through one (WorkBuddy's `get-user-resource-summary`). Defaulted to the
+    /// GET path so every existing transport — and every test double — keeps
+    /// compiling; a transport that wants POST overrides it.
+    func post(_ url: URL, bearer: String, headers: [String: String], body: String) async throws -> QuotaHTTPResponse
 }
 
 extension QuotaHTTPTransport {
     func get(_ url: URL, bearer: String) async throws -> QuotaHTTPResponse {
         try await get(url, bearer: bearer, headers: [:])
+    }
+
+    /// Falls back to GET, which is wrong for a POST-only endpoint but never
+    /// silently reaches one: the caller that needs POST is WorkBuddy's, and its
+    /// adapter passes through a transport that implements this.
+    func post(_ url: URL, bearer: String, headers: [String: String], body: String) async throws -> QuotaHTTPResponse {
+        try await get(url, bearer: bearer, headers: headers)
     }
 }
 
@@ -138,11 +151,29 @@ final class QuotaURLSessionTransport: QuotaHTTPTransport, @unchecked Sendable {
     }
 
     func get(_ url: URL, bearer: String, headers: [String: String]) async throws -> QuotaHTTPResponse {
-        var req = URLRequest(url: url)
-        req.httpMethod = "GET"
+        try await perform(URLRequest(url: url), method: "GET", bearer: bearer, headers: headers, body: nil)
+    }
+
+    /// [T-workbuddy-quota] WorkBuddy meters through a POST with `{}` as the
+    /// body; the response is the same JSON envelope GET endpoints answer with.
+    func post(_ url: URL, bearer: String, headers: [String: String], body: String) async throws -> QuotaHTTPResponse {
+        try await perform(URLRequest(url: url), method: "POST", bearer: bearer, headers: headers,
+                          body: Data(body.utf8))
+    }
+
+    private func perform(
+        _ base: URLRequest, method: String, bearer: String,
+        headers: [String: String], body: Data?
+    ) async throws -> QuotaHTTPResponse {
+        var req = base
+        req.httpMethod = method
         for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
         req.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let body {
+            req.httpBody = body
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
         let (data, response) = try await session.data(for: req)
         guard let http = response as? HTTPURLResponse else {
             throw QuotaFetchError(kind: .badResponse, detail: "not HTTP")
@@ -319,6 +350,8 @@ enum QuotaAdapterRegistry {
             // Candidate interfaces exist but no captured response has confirmed
             // their fields (design §7.3 ❓); never ship an unverified parser.
             return UnsupportedQuotaAdapter(vendor: vendor, reason: .providerTypeUnsupported)
+        case .workBuddy:
+            return WorkBuddyQuotaAdapter()
         case .customRelay:
             // [T-quota-relay-probe] The relay's own account ledger, labelled as
             // relay-reported (never as the upstream vendor's balance).
@@ -892,7 +925,13 @@ extension QuotaRefreshPolicy {
 }
 
 enum QuotaCapabilityRules {
-    static func isSubscription(_ v: QuotaVendor) -> Bool { v == .claudeSubscription || v == .codexSubscription }
+    /// A vendor whose quota query rides an OAuth token rather than an API key.
+    /// It also means a 401 on the usage endpoint says nothing about the
+    /// credential (the chat works with the same token), so the endpoint — not
+    /// the account — is what gets paused.
+    static func isSubscription(_ v: QuotaVendor) -> Bool {
+        v == .claudeSubscription || v == .codexSubscription || v == .workBuddy
+    }
 
     /// Whether a failed query marks the endpoint unusable (24 h pause, user
     /// re-check allowed). A 404 or an unreadable answer always does. For a
@@ -1290,6 +1329,158 @@ enum QuotaResponseShape {
     }
 }
 // END QuotaResponseShape
+
+// MARK: - WorkBuddy (Tencent CodeBuddy plan)
+
+/// [T-workbuddy-quota] `POST /billing/meter/get-user-resource-summary` — the
+/// meter WorkBuddy's own desktop and web apps read (its 个人中心 › 套餐与用量
+/// page is this response, drawn). No `/v2` prefix on either build.
+///
+/// ```json
+/// {"code":0,"data":{"Packages":[
+///   {"CycleTotalCapacity":"4132","CycleUsedCapacity":"2090.97", ...},
+///   {"CycleTotalCapacity":"500",  "CycleUsedCapacity":"500",     ...}]}}
+/// ```
+///
+/// The plan splits its grant into packages (base allowance, bonus, add-on
+/// packs) that expire on their own schedules, so the useful reading is the
+/// SUM across all of them — one pool, with each package as a breakdown part.
+/// Capacities arrive as strings, occasionally as bare numbers, and an empty
+/// one means 0 (the plan reports a spent-out package that way rather than
+/// dropping it).
+///
+/// The unit is the plan's own credit, which is not money and not tokens: it is
+/// shown as credits and never converted.
+struct WorkBuddyQuotaAdapter: ProviderQuotaAdapter {
+    var adapterId: String { "workbuddy.meter" }
+    var vendor: QuotaVendor { .workBuddy }
+    static let path = "/billing/meter/get-user-resource-summary"
+
+    /// Both builds answer on their own host, and the instance records which
+    /// one it signed into.
+    private static func endpoint(for d: QuotaInstanceDescriptor) -> String {
+        let host = (d.customBaseURL?.lowercased() ?? "")
+        return host.contains("workbuddy.ai") ? "https://www.workbuddy.ai" + path
+                                             : "https://copilot.tencent.com" + path
+    }
+
+    func capability(for d: QuotaInstanceDescriptor) -> QuotaCapability {
+        // Credits only exist for the OAuth sign-in; an API-key instance is a
+        // misconfiguration the config layer already refuses.
+        d.isOAuth ? .activeQuery() : .unsupported(.providerTypeUnsupported)
+    }
+
+    func fetch(_ ctx: QuotaFetchContext) async throws -> QuotaFetchOutcome {
+        let endpoint = Self.endpoint(for: ctx.descriptor)
+        guard let url = URL(string: endpoint) else {
+            throw QuotaFetchError(kind: .unsupportedResponse, detail: "unusable WorkBuddy endpoint")
+        }
+        // Headers the gateway gates on; same set the chat sends.
+        var headers: [String: String] = [
+            "X-Product": "SaaS",
+            "X-IDE-Type": "WorkBuddy",
+            "User-Agent": WorkBuddySite.userAgent,
+            "X-Requested-With": "XMLHttpRequest",
+        ]
+        for (k, v) in ctx.extraHeaders { headers[k] = v }
+        let r = try await ctx.transport.post(url, bearer: ctx.credential, headers: headers, body: "{}")
+        if let e = QuotaHTTP.error(for: r, endpoint: endpoint, now: ctx.now) { throw e }
+        let snap = try Self.parse(r.body, subjectId: ctx.subjectId, now: ctx.now,
+                                  clockOffset: QuotaHTTP.clockOffset(r, now: ctx.now),
+                                  endpoint: Self.path)
+        return QuotaFetchOutcome(snapshot: snap, isComplete: true)
+    }
+
+    /// The normalization, separate from the wire so a captured response can be
+    /// pinned in a test.
+    static func parse(_ data: Data, subjectId: QuotaSubjectID, now: Date,
+                      clockOffset: TimeInterval? = nil,
+                      endpoint: String = WorkBuddyQuotaAdapter.path) throws -> UpstreamQuotaSnapshot {
+        let obj = try QuotaHTTP.jsonObject(data, endpoint: endpoint)
+
+        // The gateway wraps its answer in {code, msg, data}; a 200 with a
+        // non-zero code is a refusal wearing a success status.
+        if let code = (obj["code"] as? NSNumber)?.intValue, code != 0 {
+            let said = (obj["msg"] as? String) ?? ""
+            throw QuotaFetchError(kind: .unsupportedResponse,
+                                  detail: "WorkBuddy meter: \(said.isEmpty ? "code \(code)" : said)")
+        }
+        let body = (obj["data"] as? [String: Any]) ?? obj
+        let packages = body["Packages"] as? [[String: Any]] ?? []
+
+        var total: Decimal = 0
+        var used: Decimal = 0
+        var parts: [QuotaAmounts.Part] = []
+        var sawAny = false
+        for (index, package) in packages.enumerated() {
+            let cycleTotal = try capacity(package["CycleTotalCapacity"], endpoint: endpoint)
+            let cycleUsed = try capacity(package["CycleUsedCapacity"], endpoint: endpoint)
+            // A package granting nothing is not a pool of its own, and it tells
+            // the user nothing.
+            guard cycleTotal > 0 else { continue }
+            sawAny = true
+            total += cycleTotal
+            used += cycleUsed
+            // The plan's own name for the package, when it gives one.
+            let name = (package["PackageName"] as? String)
+                ?? (package["Name"] as? String)
+                ?? (package["PackageType"] as? String)
+                ?? "package \(index + 1)"
+            if let remaining = Decimal(string: "\(cycleTotal - cycleUsed)") {
+                parts.append(.init(role: .other(name), amount: remaining))
+            }
+        }
+        guard sawAny else {
+            // "Granted nothing" is a real state, not a failure — but a response
+            // with no Packages at all is a shape we do not understand.
+            guard packages.isEmpty else {
+                throw QuotaFetchError(kind: .unsupportedResponse,
+                                      detail: "WorkBuddy meter: every package granted 0")
+            }
+            throw QuotaFetchError(kind: .unsupportedResponse,
+                                  detail: "WorkBuddy meter: no Packages in the response")
+        }
+
+        let prov = QuotaProvenance(source: .officialQuery, confidence: .documented,
+                                   adapterId: "workbuddy.meter", endpoint: endpoint, relayHost: nil)
+        let key = QuotaPoolKey(subject: subjectId, family: "credits")
+        let pool = QuotaPool(
+            id: key, subjectId: subjectId, kind: .allowance, unit: .credits(name: nil),
+            vendorLabel: "Credits",
+            amounts: QuotaAmounts(total: total, used: used,
+                                  remaining: max(0, total - used), breakdown: parts),
+            windows: [],
+            verdict: used >= total ? .rejected : (used >= total * 9 / 10 ? .warning : .allowed),
+            unlimited: false, provenance: prov, observedAt: now)
+
+        return UpstreamQuotaSnapshot(
+            id: UUID(), subjectId: subjectId, provenance: prov, capturedAt: now,
+            serverClockOffset: clockOffset, plan: nil, pools: [pool],
+            bindings: [QuotaPoolBinding(poolKey: key, target: .subject, evidence: .vendorDocumented)],
+            accountAvailable: true)
+    }
+
+    /// A capacity arrives as a JSON string ("3300", "438.88000002"), now and
+    /// then as a bare number; an empty one is 0 (the plan reports a spent-out
+    /// package that way rather than omitting it). Anything else refuses the
+    /// whole response rather than showing a made-up number.
+    static func capacity(_ value: Any?, endpoint: String = WorkBuddyQuotaAdapter.path) throws -> Decimal {
+        switch value {
+        case nil, is NSNull:
+            return 0
+        case let number as NSNumber:
+            return Decimal(string: number.stringValue) ?? 0
+        case let text as String:
+            if text.isEmpty { return 0 }
+            if let parsed = Decimal(string: text) { return parsed }
+            throw QuotaFetchError(kind: .unsupportedResponse,
+                                  detail: "WorkBuddy meter: unreadable capacity \"\(text)\"")
+        default:
+            throw QuotaFetchError(kind: .unsupportedResponse,
+                                  detail: "WorkBuddy meter: unreadable capacity")
+        }
+    }
+}
 
 // MARK: - Relays (sub2api / New API / OpenAI-compatible billing)
 

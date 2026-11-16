@@ -38,6 +38,10 @@ enum QuotaVendor: String, Codable, Sendable, CaseIterable {
     /// usage or balance API is documented: console link only.
     case openCode
     case customRelay, unknown
+    /// [T-workbuddy-quota] WorkBuddy (the Tencent CodeBuddy plan). Both builds
+    /// meter through `get-user-resource-summary`, which answers in the plan's
+    /// own credits — not money, not tokens.
+    case workBuddy
 }
 
 /// Owner of a set of quota pools. Two instances resolving to the same subject

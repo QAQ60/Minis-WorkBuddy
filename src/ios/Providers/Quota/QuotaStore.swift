@@ -286,6 +286,20 @@ final class QuotaStore: ObservableObject {
                 }
                 return try? await KimiOAuthManager.shared.validAccessToken(instanceId: instanceId)
             }
+        } else if adapter.vendor == .workBuddy, d.isOAuth {
+            // [T-workbuddy-quota] The meter reads the same access token the
+            // chat does. Keyed by instance, not by a hash of the token: the
+            // token rotates on every refresh, so hashing it would move the
+            // subject (and its history) to a new key each time.
+            subjectId = Self.subscriptionSubject(vendor: adapter.vendor, instanceId: instanceId)
+            attach(instanceId: instanceId, to: subjectId, maskedKey: "OAuth")
+            credentialSource = {
+                if let manual = ProviderKeychainHelper.loadOAuthString(instanceId: instanceId, account: "manual-oauth-token")?
+                    .trimmingCharacters(in: .whitespacesAndNewlines), !manual.isEmpty {
+                    return manual
+                }
+                return try? await WorkBuddyOAuthManager.shared.validAccessToken(instanceId: instanceId)
+            }
         } else {
             guard let credential = Self.credential(for: instance) else { return note(instanceId, .missingCredential) }
             subjectId = QuotaSubjectID(vendor: adapter.vendor, accountKey: QuotaAccountKey.derive(from: credential))

@@ -183,6 +183,21 @@ final class OpenAIProvider: LLMProvider {
     /// of provider-specific branching.
     var chatBodyDecorator: (@Sendable (inout [String: Any]) -> Void)?
 
+    /// [T-workbuddy-refusal-mend] Called when a Chat Completions request is
+    /// REFUSED with a business code the vendor says is about the body's SHAPE
+    /// rather than the account, so re-sending a mended body can succeed.
+    ///
+    /// Returns true when it changed `body`; false means "not mine, give up".
+    /// The closure receives the gateway's raw refusal text, because the code
+    /// and its message are both needed (`11128` is returned for a moved system
+    /// prompt AND for an unknown channel, and only the message tells them
+    /// apart).
+    ///
+    /// At most ONE retry per request. Same contract as the reference
+    /// implementation (kwwk's `WorkBuddyChatClient`): every other answer, and
+    /// the last refusal, goes up as it came.
+    var refusableBodyMender: (@Sendable (inout [String: Any], _ refusal: String) -> Bool)?
+
     /// [T-model-use-image-passthrough GH#62] Arbitrary extra fields merged into the
     /// /images/generations JSON body, so `minis-model-use` can pass provider-specific
     /// params our fixed schema never modeled (e.g. Volcengine Seedream's `image` for
@@ -972,6 +987,54 @@ final class OpenAIProvider: LLMProvider {
         body: [String: Any],
         isResponsesAPI: Bool
     ) async throws -> (AsyncThrowingStream<String, Error>, Int) {
+        // [T-workbuddy-refusal-mend] One chance to mend a refusal that is about
+        // the body's shape. The first attempt is the ordinary path; the second
+        // only exists when a provider installed `refusableBodyMender` AND the
+        // gateway answered with a non-2xx whose text the mender recognises.
+        do {
+            return try await streamRawOnce(body: body, isResponsesAPI: isResponsesAPI)
+        } catch let refusal as RefusedBodyError {
+            // Every provider reaches here — the wrapper is how the raw refusal
+            // text survives long enough to be inspected. Without a mender
+            // installed, or without the mender claiming it, the ORIGINAL error
+            // goes up unchanged.
+            //
+            // Only refusals that could be about the BODY's shape are worth the
+            // round trip: a 401/403/429/5xx says nothing about the messages, so
+            // it is rethrown before the mender is consulted. That keeps the
+            // retry from doubling the load on a rate-limited or broken gateway.
+            guard let mender = refusableBodyMender, Self.isMendableStatus(refusal.status) else {
+                throw refusal.underlying
+            }
+            var mended = body
+            guard mender(&mended, refusal.text) else { throw refusal.underlying }
+            logger.info("🔁 Refusal looked like a body-shape problem; re-sending a mended body (once)")
+            do {
+                return try await streamRawOnce(body: mended, isResponsesAPI: isResponsesAPI)
+            } catch let again as RefusedBodyError {
+                // The mended body was refused too — that refusal is the answer.
+                throw again.underlying
+            }
+        }
+    }
+
+    /// The statuses whose body can mean "this chat's shape is wrong". A 400 is
+    /// the only one the gateway uses for that; everything else is about the
+    /// account, the rate or the server, and no rewording mends it.
+    static func isMendableStatus(_ status: Int) -> Bool { status == 400 }
+
+    /// A non-2xx answer kept in a form the caller can inspect before deciding
+    /// whether to re-send. See `refusableBodyMender`.
+    private struct RefusedBodyError: Error {
+        let text: String
+        let status: Int
+        let underlying: Error
+    }
+
+    private func streamRawOnce(
+        body: [String: Any],
+        isResponsesAPI: Bool
+    ) async throws -> (AsyncThrowingStream<String, Error>, Int) {
         let url: URL
         var request: URLRequest
 
@@ -1120,7 +1183,10 @@ final class OpenAIProvider: LLMProvider {
             var body = ""
             for try await line in byteStream.lines { body += line }
             session.finishTasksAndInvalidate()
-            throw mapHTTPError(statusCode: statusCode, body: body)
+            let mapped = mapHTTPError(statusCode: statusCode, body: body)
+            // Carry the raw text alongside, so the mender can read the vendor's
+            // business code and message instead of a rewritten sentence.
+            throw RefusedBodyError(text: body, status: statusCode, underlying: mapped)
         }
 
         let lineStream = AsyncThrowingStream<String, Error> { continuation in

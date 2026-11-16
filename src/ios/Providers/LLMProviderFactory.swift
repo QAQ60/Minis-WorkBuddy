@@ -449,6 +449,13 @@ enum LLMProviderFactory {
             provider.chatBodyDecorator = { body in
                 WorkBuddyBodyMend.apply(to: &body)
             }
+            // [T-workbuddy-refusal-mend] A refusal that is about what the chat
+            // SAYS gets one retry on a mended body, mended by the same closure
+            // that shapes every request. Without this the user sees a bare
+            // "错误码 11128" for a chat the gateway would have served.
+            provider.refusableBodyMender = { body, refusal in
+                WorkBuddyRefusalMend.mend(&body, refusal: refusal)
+            }
         }
 
         // A manually-pasted bearer token is honoured exactly like the xAI /
