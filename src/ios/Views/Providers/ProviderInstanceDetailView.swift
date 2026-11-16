@@ -1949,7 +1949,7 @@ struct ModelEntryDetailSheet: View {
         let trimmedContextWindow = contextWindowText.trimmingCharacters(in: .whitespaces)
         let typedContextWindow: Int? = trimmedContextWindow.isEmpty ? nil : Int(trimmedContextWindow)
 
-        let updatedBaseModel = LLMModel(
+        var updatedBaseModel = LLMModel(
             id: finalId,
             displayName: entry.baseModel.displayName,
             provider: entry.baseModel.provider,
@@ -1959,6 +1959,12 @@ struct ModelEntryDetailSheet: View {
             supportsReasoning: entry.baseModel.supportsReasoning,
             interleavedReasoningField: entry.baseModel.interleavedReasoningField
         )
+        // Both of these are set AFTER init, so a bare rebuild drops them — and
+        // this rebuild is saved as the new baseModel. Losing the limits one let
+        // the next refresh put models.dev's window back; losing the modality one
+        // put its `audio` / `video` badges back.
+        updatedBaseModel.limitsReportedByEndpoint = entry.baseModel.limitsReportedByEndpoint
+        updatedBaseModel.modalityReportedByEndpoint = entry.baseModel.modalityReportedByEndpoint
 
         // Build overrides.
         //

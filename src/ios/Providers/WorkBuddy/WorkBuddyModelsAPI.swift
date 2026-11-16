@@ -114,21 +114,33 @@ enum WorkBuddyModelsAPI {
             // server-side and tells the model it was filtered. Listing them
             // as vision would let the user attach a picture that is silently
             // discarded — say text-only instead, so the UI can leave it out.
+            //
+            // `.vision`, not `.fullMultimodal`: the config's one boolean says
+            // nothing about audio, video or PDF, and the wider set put an
+            // `audio`/`video` badge on every row. `.textOnly` rather than nil
+            // for the rest, because nil falls back to the PROVIDER default
+            // (`.vision`) — the same wrong claim by a different route.
             let declaresImages = (detail["supportsImages"] as? NSNumber)?.boolValue ?? false
             let images = declaresImages && !textOnly(site: site, id: entry.id)
-            models.append(LLMModel(
+            var model = LLMModel(
                 id: entry.id,
                 displayName: names[index],
                 provider: "WorkBuddy",
-                modalityOverride: images ? .fullMultimodal : nil,
-                // The plan's own numbers beat models.dev's guess: the config
-                // names the window this account may actually fill, and asking
-                // for more than it allows is throttled well below the 1M the
-                // catalog advertises.
+                modalityOverride: modality(images: images),
                 contextWindow: positiveInt(detail["maxInputTokens"]),
                 maxOutputTokens: positiveInt(detail["maxOutputTokens"]),
                 reasoningEffortValues: effortTiers(from: detail)
-            ))
+            )
+            // The config is this endpoint's own statement about this account,
+            // which is what `limitsReportedByEndpoint` exists to mark: the
+            // catalog may only fill the limits it left out, never overwrite
+            // them. Without it models.dev put 1M back on a plan that throttles
+            // far below that.
+            model.limitsReportedByEndpoint = model.contextWindow != nil || model.maxOutputTokens != nil
+            // Same authority for the modality: one boolean from the plan, and
+            // models.dev must not broaden it to audio/video/pdf.
+            model.modalityReportedByEndpoint = true
+            models.append(model)
         }
         guard !models.isEmpty else {
             return Catalog(models: [], detail: "WorkBuddy 站点未列出可用模型，可手动填写模型 ID")
@@ -155,6 +167,27 @@ enum WorkBuddyModelsAPI {
         if digits.hasPrefix("x") { digits = digits.dropFirst() }
         guard let rate = Double(digits), rate.isFinite, rate >= 0 else { return nil }
         return rate
+    }
+
+    /// The modality a config detail describes.
+    ///
+    /// `supportsImages` is one boolean. Mapping it to `.fullMultimodal` (the
+    /// first cut) claimed audio, video and PDF support the plan never
+    /// mentioned, and every row in the picker wore those badges. `.vision` is
+    /// the most it may mean; `.textOnly` — never nil — is the little it may
+    /// mean, because nil falls through to the provider default (`.vision`).
+    static func modality(images: Bool) -> ModelModality {
+        images ? .vision : .textOnly
+    }
+
+    /// Whether a parsed model carries the "this endpoint described me" stamps,
+    /// which stop models.dev from overwriting what the plan itself said.
+    static func stampsModalityAuthority(_ model: LLMModel) -> Bool {
+        model.modalityReportedByEndpoint == true
+    }
+
+    static func stampsLimitAuthority(_ model: LLMModel) -> Bool {
+        model.limitsReportedByEndpoint == true
     }
 
     /// A count the config gave, when it gave a usable one.

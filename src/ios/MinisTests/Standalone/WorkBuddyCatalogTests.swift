@@ -72,6 +72,8 @@ struct LLMModel {
     var interleavedReasoningField: String? = nil
     var reasoningEffortValues: [String]? = nil
     var declaresNoEffortTiers: Bool? = nil
+    var limitsReportedByEndpoint: Bool? = nil
+    var modalityReportedByEndpoint: Bool? = nil
 }
 
 enum LLMError: Error { case providerError(message: String) }
@@ -189,6 +191,29 @@ eq("an empty declared list falls through to the flag",
        "supportsReasoning": true, "reasoning": ["supportedEfforts": []],
    ]),
    ["none", "low", "high", "max"])
+
+// ── Modality breadth ──────────────────────────────────────────────────
+// The plan's config carries ONE boolean about images. It says nothing about
+// audio, video or PDF, so a row must never claim those — the first cut mapped
+// the flag to `.fullMultimodal` and every model wore an `audio` + `video`
+// badge. `.textOnly` (not nil) for the rest, because nil falls back to the
+// PROVIDER default, which is `.vision`: the same wrong claim by another route.
+print("— Modality breadth")
+eq("an image-capable model is .vision (text, image, pdf)",
+   WorkBuddyModelsAPI.modality(images: true), ModelModality.vision)
+eq("a model without the flag is .textOnly, never nil",
+   WorkBuddyModelsAPI.modality(images: false), ModelModality.textOnly)
+t(".vision carries NO audio input",
+  !ModelModality.vision.contains(.audioInput))
+t(".vision carries NO video input",
+  !ModelModality.vision.contains(.videoInput))
+// Memberwise-init order follows the struct's declaration order.
+let stamped = LLMModel(id: "m", displayName: "M", provider: "WorkBuddy",
+                       limitsReportedByEndpoint: true, modalityReportedByEndpoint: true)
+t("the endpoint's modality flag is read back", WorkBuddyModelsAPI.stampsModalityAuthority(stamped))
+t("...and the limits flag too", WorkBuddyModelsAPI.stampsLimitAuthority(stamped))
+t("an unmarked model is not treated as authoritative",
+  !WorkBuddyModelsAPI.stampsModalityAuthority(LLMModel(id: "m", displayName: "M", provider: "WorkBuddy")))
 
 print("HARNESS failures=\(failures)")
 exit(failures == 0 ? 0 : 1)

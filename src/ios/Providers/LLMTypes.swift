@@ -127,6 +127,23 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
     /// `ModelEntry.model`'s rebuild by hand, like `voiceRole`.
     var limitsReportedByEndpoint: Bool?
 
+    /// True when `modalityOverride` was read from THIS endpoint's own catalogue
+    /// — WorkBuddy's `/v3/config` `supportsImages`, for instance — rather than
+    /// inferred from the model's name or taken from models.dev.
+    ///
+    /// models.dev otherwise wins unconditionally (`applyDevData`), which is the
+    /// right default: its match is usually a better statement than a name
+    /// heuristic. It is the wrong default when the endpoint has spoken, because
+    /// the catalog is talking about a DIFFERENT vendor's model that happens to
+    /// share an id. The observed case: every WorkBuddy row carried an `audio`
+    /// and `video` badge from a catalogue entry for some other `space-bunny` /
+    /// `glm-5.3`, when the plan's own config said only "takes images".
+    ///
+    /// Optional so older saves decode as nil (models.dev keeps winning, as
+    /// before); set after init and carried across `ModelEntry.model`'s rebuild
+    /// by hand, like `voiceRole` / `limitsReportedByEndpoint`.
+    var modalityReportedByEndpoint: Bool?
+
     init(id: String, displayName: String, provider: String, modalityOverride: ModelModality? = nil,
          contextWindow: Int? = nil, maxOutputTokens: Int? = nil,
          supportsReasoning: Bool? = nil, interleavedReasoningField: String? = nil,

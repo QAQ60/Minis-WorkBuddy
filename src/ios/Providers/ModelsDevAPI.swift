@@ -516,10 +516,18 @@ enum ModelsDevAPI {
     ) -> LLMModel {
         var result = model
 
-        // Modality: models.dev is the source of truth — always apply when available.
-        // This overrides both provider-level defaults and API-parsed modalities,
-        // since models.dev has accurate per-model data (e.g. pdf support distinctions).
-        if let devModality = devModel.resolvedModality {
+        // Modality: models.dev is the source of truth — apply when available, so
+        // a provider-level default or a name heuristic never outranks it
+        // (models.dev has accurate per-model data, e.g. pdf support distinctions).
+        //
+        // EXCEPT where the endpoint described the model itself: its catalogue
+        // entry is a statement about THIS account's model, where models.dev's
+        // match may be another vendor's model sharing the id. Keeping the
+        // endpoint's answer is the same rule `keepReported` applies to limits
+        // below, and the reason is the same — the catalog is a guess, the
+        // endpoint is not.
+        let keepModality = model.modalityReportedByEndpoint == true
+        if let devModality = devModel.resolvedModality, !keepModality {
             result.modalityOverride = devModality
         }
 

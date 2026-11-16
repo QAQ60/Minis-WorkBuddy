@@ -245,6 +245,9 @@ struct ModelEntry: Identifiable, Codable, Hashable {
         // [OpenMinis#438] Same reason: re-enriching the effective model must
         // not let models.dev overwrite the limits the endpoint reported.
         rebuilt.limitsReportedByEndpoint = baseModel.limitsReportedByEndpoint
+        // And the same for the modality, so a refresh cannot put an `audio`
+        // badge back on a model whose own catalogue said "images only".
+        rebuilt.modalityReportedByEndpoint = baseModel.modalityReportedByEndpoint
         return rebuilt
     }
 

@@ -359,7 +359,7 @@ enum DebugRPCProvider {
         apply("pdfInput", .pdfInput)
         // Rebuild baseModel with the new modalityOverride; ModelEntry.baseModel is `let`,
         // so we use replaceEntries with a fresh model list for this instance.
-        let newModel = LLMModel(
+        var newModel = LLMModel(
             id: entry.baseModel.id,
             displayName: entry.baseModel.displayName,
             provider: entry.baseModel.provider,
@@ -369,6 +369,12 @@ enum DebugRPCProvider {
             supportsReasoning: entry.baseModel.supportsReasoning,
             interleavedReasoningField: entry.baseModel.interleavedReasoningField
         )
+        // Both are set after init, so a rebuild drops them.
+        newModel.limitsReportedByEndpoint = entry.baseModel.limitsReportedByEndpoint
+        // The caller just chose this modality by hand — an explicit choice must
+        // survive the models.dev overwrite, exactly as an endpoint's own
+        // statement does.
+        newModel.modalityReportedByEndpoint = true
         // Build the full instance entry list, swapping just this one.
         let instanceId = entry.providerInstanceId
         let allEntries = store.entries(for: instanceId)
