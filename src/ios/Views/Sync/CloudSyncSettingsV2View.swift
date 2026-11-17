@@ -17,6 +17,11 @@ struct CloudSyncSettingsV2View: View {
     @State private var maxFileSizeMB: Int = 1
     @State private var remoteDevices: [SyncDevice] = []
     @State private var statusText: String = ""
+    /// Set when CloudKit is unavailable in this process (a container runtime
+    /// re-signs the app without the iCloud entitlements). The toggle then does
+    /// nothing — [T-icloud-no-entitlement-container] — so say so here instead
+    /// of letting the user flip a switch that can never work.
+    @State private var cloudKitUnavailable = false
     // [T-ios-migration-timer-sessionlist-uaf-crash] 5s refresh cadence is driven by
     // a `.task` async loop (see refreshLoop), NOT a process-lived
     // `Timer.publish(every:5).autoconnect()` + `.onReceive`. A graph-bound Combine
@@ -34,12 +39,17 @@ struct CloudSyncSettingsV2View: View {
                 Toggle(isOn: Binding(
                     get: { v2Enabled },
                     set: { newValue in
+                        // [T-icloud-no-entitlement-container] Under a container
+                        // runtime the entitlements are gone and enabling would
+                        // abort the process (the crash this gate replaces).
+                        guard !cloudKitUnavailable else { return }
                         if #available(iOS 17.0, *) { SyncV2Bootstrap.setEnabled(newValue) }
                         v2Enabled = newValue
                     }
                 )) {
                     Text("Enable iCloud Sync")
                 }
+                .disabled(cloudKitUnavailable)
                 if !statusText.isEmpty {
                     NavigationLink {
                         SyncMigrationDetailView()
@@ -50,8 +60,14 @@ struct CloudSyncSettingsV2View: View {
                     }
                 }
             } footer: {
-                Text("Toggle takes effect on next app launch.")
-                    .font(.caption)
+                if cloudKitUnavailable {
+                    Text("iCloud is not available in this app container (the app was re-signed without iCloud entitlements — e.g. installed through a container runtime). iCloud Sync cannot work here.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Toggle takes effect on next app launch.")
+                        .font(.caption)
+                }
             }
 
             if v2Enabled {
@@ -211,6 +227,12 @@ struct CloudSyncSettingsV2View: View {
 
     @MainActor
     private func refresh() async {
+        cloudKitUnavailable = !MinisCloudKitAvailable()
+        if cloudKitUnavailable {
+            v2Enabled = false
+            statusText = "CloudKit unavailable in this app container"
+            return
+        }
         if #available(iOS 17.0, *) {
             v2Enabled = SyncV2Bootstrap.isEnabled
         }

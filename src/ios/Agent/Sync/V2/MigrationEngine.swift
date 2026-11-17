@@ -899,6 +899,9 @@ final class MigrationEngine {
     /// permanent failure. [T-ios-icloud-v1v2-migration-fails]
     @available(iOS 17.0, *)
     private static func countCloudSessionsV2() async -> Int? {
+        // [T-icloud-no-entitlement-container] Probe before the container init:
+        // under a container runtime this raises an uncatchable CKException.
+        guard MinisCloudKitAvailable() else { return nil }
         let container = CKContainer(identifier: ICloudSharedZoneTransport.containerIdentifier)
         let zoneID = CKRecordZone.ID(zoneName: ICloudSharedZoneTransport.sharedZoneName)
         let query = CKQuery(recordType: "SessionV2", predicate: NSPredicate(value: true))
@@ -1170,6 +1173,11 @@ enum V1FetcherShim {
     static func countOwnZone() async throws -> Int {
         let myDeviceId = DeviceIdentity.deviceId
         let zoneID = CKRecordZone.ID(zoneName: "device-\(myDeviceId)")
+        // [T-icloud-no-entitlement-container] Probe before the container init:
+        // under a container runtime this raises an uncatchable CKException.
+        guard MinisCloudKitAvailable() else {
+            throw MinisCloudKitUnavailableError()
+        }
         let container = CKContainer(identifier: ICloudSharedZoneTransport.containerIdentifier)
         let db = container.privateCloudDatabase
 
@@ -1286,6 +1294,11 @@ enum V1FetcherShim {
             owner.markPurged(zoneName: zoneName)
             // Read back. `allRecordZones` is the same call the inventory uses,
             // so "gone here" means "gone in the list the user is looking at".
+        // [T-icloud-no-entitlement-container] Probe before the container init:
+        // under a container runtime this raises an uncatchable CKException.
+        guard MinisCloudKitAvailable() else {
+            throw MinisCloudKitUnavailableError()
+        }
             let container = CKContainer(identifier: ICloudSharedZoneTransport.containerIdentifier)
             let remaining = try await container.privateCloudDatabase.allRecordZones()
             if remaining.contains(where: { $0.zoneID.zoneName == zoneName }) {
@@ -1369,6 +1382,11 @@ enum V1FetcherShim {
 
     static func deleteOwnZone(zoneName: String) async throws {
         if #available(iOS 17.0, *) {
+        // [T-icloud-no-entitlement-container] Probe before the container init:
+        // under a container runtime this raises an uncatchable CKException.
+        guard MinisCloudKitAvailable() else {
+            throw MinisCloudKitUnavailableError()
+        }
             let container = CKContainer(identifier: ICloudSharedZoneTransport.containerIdentifier)
             let zoneID = CKRecordZone.ID(zoneName: zoneName)
             do {
@@ -1396,6 +1414,11 @@ enum V1FetcherShim {
     /// the "iCloud Zones" inventory + per-zone delete control.
     @available(iOS 17.0, *)
     static func listAllZones() async throws -> [ZoneInfo] {
+        // [T-icloud-no-entitlement-container] Probe before the container init:
+        // under a container runtime this raises an uncatchable CKException.
+        guard MinisCloudKitAvailable() else {
+            throw MinisCloudKitUnavailableError()
+        }
         let container = CKContainer(identifier: ICloudSharedZoneTransport.containerIdentifier)
         let zones = try await container.privateCloudDatabase.allRecordZones()
         let myDeviceId = DeviceIdentity.deviceId

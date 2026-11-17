@@ -545,6 +545,15 @@ final class CloudSyncEngine: ObservableObject {
             return
         }
         guard syncEngine == nil else { return }
+        // [T-icloud-no-entitlement-container] Same probe as SyncV2Bootstrap:
+        // under a container runtime the entitlements are gone, and the
+        // `container.privateCloudDatabase` access below raises CKException
+        // (uncatchable from Swift). Stay disabled instead of aborting.
+        guard MinisCloudKitAvailable() else {
+            syncStatus = .disabled
+            logger.warning("[CloudSync] CloudKit unavailable in this process (no iCloud entitlement — container runtime?) — staying disabled")
+            return
+        }
 
         // [T-ios-reboot-keychain-identity-rotation] Refuse to start on a
         // provisional identity. `start()` is reached from the scenePhase→.active

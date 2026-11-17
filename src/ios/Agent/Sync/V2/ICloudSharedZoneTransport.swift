@@ -16,6 +16,14 @@ private let logger = AppLogger(category: "SyncTransport")
 ///                      toggle this category off without losing chat sync)
 @available(iOS 17.0, *)
 @MainActor
+
+/// Thrown by `start()` when CloudKit is unavailable in this process (no iCloud
+/// entitlement — a container runtime re-sign). SyncCore treats it like any
+/// other transport failure: logged, retried on the next cadence, never fatal.
+struct MinisCloudKitUnavailableError: Error, CustomStringConvertible {
+    var description: String { "CloudKit unavailable: process lacks the iCloud entitlement (container runtime?)" }
+}
+
 final class ICloudSharedZoneTransport: NSObject, SyncTransport {
 
     // MARK: - SyncTransport conformance
@@ -518,6 +526,14 @@ final class ICloudSharedZoneTransport: NSObject, SyncTransport {
 
     func start() async throws {
         guard syncEngine == nil else { return }
+        // [T-icloud-no-entitlement-container] Reached only through the gated
+        // bootstrap in practice, but the configuration below touches the
+        // container — keep the probe here so a future call site cannot
+        // reintroduce the abort.
+        guard MinisCloudKitAvailable() else {
+            logger.warning("[SyncTransport] CloudKit unavailable (no iCloud entitlement — container runtime?) — start refused")
+            throw MinisCloudKitUnavailableError()
+        }
         logger.info("[SyncTransport] start STEP=enter")
         // Restore etag cache before any send; without this, the first
         // post-launch send rebuilds CKRecords without etags and the

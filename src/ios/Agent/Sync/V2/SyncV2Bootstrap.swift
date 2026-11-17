@@ -145,6 +145,17 @@ enum SyncV2Bootstrap {
             logger.warning("[SyncCore] v2 requires iOS 17+ — disabling")
             return
         }
+        // [T-icloud-no-entitlement-container] A container runtime (LiveContainer
+        // et al.) re-signs the app without the embedded iCloud entitlements, and
+        // the first `CKContainer(identifier:)` raises CKException, which Swift
+        // cannot catch — the tap on the sync toggle died with SIGABRT before any
+        // of the guarded steps below could run. Probe once through the ObjC
+        // catcher; without CloudKit there is nothing for either engine to do.
+        guard MinisCloudKitAvailable() else {
+            logger.warning("[SyncCore] CloudKit unavailable in this process (no iCloud entitlement — container runtime?) — v2 stays off")
+            UserDefaults.standard.set(false, forKey: "cloudSync.v2.enabled")
+            return
+        }
 
         // [T-ios-reboot-keychain-identity-rotation] Same guard as
         // CloudSyncEngine.start, for the same reason: this runs from

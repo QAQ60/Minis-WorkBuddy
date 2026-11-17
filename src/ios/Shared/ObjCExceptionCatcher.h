@@ -20,3 +20,12 @@ NS_ASSUME_NONNULL_BEGIN
 BOOL MinisCatchObjCException(void (NS_NOESCAPE ^block)(void), NSString *_Nullable *_Nullable reason);
 
 NS_ASSUME_NONNULL_END
+
+/// Returns YES when constructing `CKContainer(identifier:)` is safe in this
+/// process — i.e. the host app actually carries the iCloud entitlements.
+/// A container runtime (LiveContainer et al.) re-signs the app WITHOUT the
+/// embedded entitlements, and the first CKContainer init then raises
+/// `CKException` ("process must have com.apple.developer.icloud-services
+/// entitlement"), which Swift cannot catch and which aborts the process.
+/// Memoized: the entitlement set cannot change within a launch.
+BOOL MinisCloudKitAvailable(void);

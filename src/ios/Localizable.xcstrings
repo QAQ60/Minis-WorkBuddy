@@ -14148,6 +14148,29 @@
         }
       }
     },
+    "CloudKit unavailable in this app container" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CloudKit unavailable in this app container"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CloudKit 在此应用容器中不可用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CloudKit 在此應用程式容器中無法使用"
+          }
+        }
+      }
+    },
     "Compatible interface (unverified)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -56875,6 +56898,29 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Python 中 hashlib 的 sha256、md5 等摘要；雜湊計算本身在 libcrypto 中執行。"
+          }
+        }
+      }
+    },
+    "iCloud is not available in this app container (the app was re-signed without iCloud entitlements — e.g. installed through a container runtime). iCloud Sync cannot work here." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud is not available in this app container (the app was re-signed without iCloud entitlements — e.g. installed through a container runtime). iCloud Sync cannot work here."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud 在此应用容器中不可用（应用重签时未包含 iCloud 授权——例如通过容器环境安装）。iCloud 同步无法在此使用。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud 在此應用程式容器中無法使用（應用程式重簽時未包含 iCloud 授權——例如透過容器環境安裝）。iCloud 同步無法在此使用。"
           }
         }
       }
