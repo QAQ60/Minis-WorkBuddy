@@ -14,9 +14,6 @@ private let logger = AppLogger(category: "SyncTransport")
 ///   - minis-devices  : SyncDevice heartbeat records
 ///   - minis-secrets  : ProviderConfig + EnvVar (separate so users can
 ///                      toggle this category off without losing chat sync)
-@available(iOS 17.0, *)
-@MainActor
-
 /// Thrown by `start()` when CloudKit is unavailable in this process (no iCloud
 /// entitlement — a container runtime re-sign). SyncCore treats it like any
 /// other transport failure: logged, retried on the next cadence, never fatal.
@@ -24,6 +21,8 @@ struct MinisCloudKitUnavailableError: Error, CustomStringConvertible {
     var description: String { "CloudKit unavailable: process lacks the iCloud entitlement (container runtime?)" }
 }
 
+@available(iOS 17.0, *)
+@MainActor
 final class ICloudSharedZoneTransport: NSObject, SyncTransport {
 
     // MARK: - SyncTransport conformance
