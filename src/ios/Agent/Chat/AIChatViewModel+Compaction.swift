@@ -705,6 +705,16 @@ extension AIChatViewModel {
     /// mutated. The kept tail (live anchor for the next turn) is whatever the
     /// user types next — there is no "auto-keep last N user turns" magic.
     func compactAll() {
+        // [T-compact-silent-noop] Every early exit here used to be silent except
+        // the first, so "I tapped Compact and nothing at all happened" was a
+        // legitimate report: a session with no id, or an anchor that could not
+        // be resolved, returned without a word. Each now says why.
+        //
+        // `isCompacting` is deliberately NOT set here: this function only
+        // schedules, and `compactBefore` owns that flag (it guards on it at
+        // entry and clears it in a defer). Setting it here would make the
+        // scheduled call bail out immediately — a self-inflicted silent no-op.
+        // The in-flight case is caught by `isProcessing` instead.
         guard !isProcessing else {
             appendSystemInfo("Cannot compact while processing.", icon: "arrow.down.right.and.arrow.up.left")
             return
@@ -716,7 +726,12 @@ extension AIChatViewModel {
             appendSystemInfo("Not enough messages to compact.", icon: "arrow.down.right.and.arrow.up.left")
             return
         }
-        guard let lastActive = activeMessages.last else { return }
+        guard let lastActive = activeMessages.last else {
+            // Unreachable given the count check above, but a `return` here would
+            // be the same silent no-op this work is removing.
+            appendSystemInfo("Not enough messages to compact.", icon: "arrow.down.right.and.arrow.up.left")
+            return
+        }
         // includesBoundary=false: same path as long-press compactBefore. The
         // flag is preserved on the API for ABI compat with older v1 callers
         // but is ignored by the v2 anchor calculation.
@@ -1040,9 +1055,17 @@ extension AIChatViewModel {
         }
         guard !isCompacting else {
             logger.info("[Compact] Compaction already in progress")
+            // [T-compact-silent-noop] Was a silent return.
+            appendSystemInfo("A compaction is already running.", icon: "arrow.down.right.and.arrow.up.left")
             return
         }
-        guard let sessionId else { return }
+        guard let sessionId else {
+            // [T-compact-silent-noop] No session means nothing to write the
+            // marker to; say so instead of returning into the void.
+            appendSystemInfo("Cannot compact: this chat has no saved session yet.",
+                            icon: "arrow.down.right.and.arrow.up.left")
+            return
+        }
         // [T-ios-compact-model-fallback] Per-RUN state: a model that was out of
         // quota an hour ago may be fine now, so the burn list must not persist
         // across compactions. `isCompacting` above makes runs non-overlapping,
@@ -1050,8 +1073,18 @@ extension AIChatViewModel {
         Self.compactFailedEntryIds.removeAll()
 
         // Find the boundary UI message.
-        guard let boundaryIndex = messages.firstIndex(where: { $0.id == chatMessageId }) else { return }
-        guard boundaryIndex > 0 else { return }
+        guard let boundaryIndex = messages.firstIndex(where: { $0.id == chatMessageId }) else {
+            appendSystemInfo("Cannot compact: that message is no longer in this chat.",
+                            icon: "arrow.down.right.and.arrow.up.left")
+            return
+        }
+        guard boundaryIndex > 0 else {
+            // Nothing sits above the very first message, so there is nothing to
+            // fold into a summary.
+            appendSystemInfo("Nothing above this message to compact.",
+                            icon: "arrow.down.right.and.arrow.up.left")
+            return
+        }
         let boundaryUIMsg = messages[boundaryIndex]
 
         let compactMeasuredBefore = measureOutboundContextTokens()
@@ -1286,10 +1319,19 @@ extension AIChatViewModel {
             // retried at all.
             let didSegment = Self.isSegmentRetryableError(error)
             logger.error("[Compact] Summary generation failed (segmented=\(didSegment)): \(error)")
-            statusMsg.content = didSegment
-                ? "Compaction failed after retrying in segments: \(error.localizedDescription)"
-                : "Compaction failed: \(error.localizedDescription)"
+            let reason = error.localizedDescription
+            let text = didSegment
+                ? "Compacting failed after retrying in segments: \(reason)"
+                : "Compacting failed: \(reason)"
+            statusMsg.content = text
             statusMsg.isCompactLoading = false
+            // [T-compact-failure-visible] `statusMsg` is a .systemInfo row, and
+            // those are never persisted — a DB reload (or the next sync cycle)
+            // drops it, which is why a failed compact looked like "nothing
+            // happened": no divider, no change to the context figure, and the
+            // one line explaining it had vanished. The error banner survives
+            // because it lives on the view model, not in the message list.
+            errorMessage = text
             return
         }
 

@@ -696,11 +696,13 @@ final class OpenAIProvider: LLMProvider {
         )
 
         let (data, response) = try await URLSession.shared.data(for: request)
-        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+        let http = response as? HTTPURLResponse
+        let statusCode = http?.statusCode ?? -1
 
         guard (200..<300).contains(statusCode) else {
             let body = String(data: data, encoding: .utf8) ?? ""
-            throw mapHTTPError(statusCode: statusCode, body: body)
+            throw mapHTTPError(statusCode: statusCode, body: body,
+                               retryAfter: http?.value(forHTTPHeaderField: "Retry-After"))
         }
 
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
@@ -771,13 +773,15 @@ final class OpenAIProvider: LLMProvider {
             session.finishTasksAndInvalidate()
             throw error
         }
-        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+        let http = response as? HTTPURLResponse
+        let statusCode = http?.statusCode ?? -1
 
         if !(200..<300).contains(statusCode) {
             var body = ""
             for try await line in byteStream.lines { body += line }
             session.finishTasksAndInvalidate()
-            throw mapHTTPError(statusCode: statusCode, body: body)
+            throw mapHTTPError(statusCode: statusCode, body: body,
+                               retryAfter: http?.value(forHTTPHeaderField: "Retry-After"))
         }
 
         return AsyncThrowingStream { continuation in
@@ -1172,10 +1176,11 @@ final class OpenAIProvider: LLMProvider {
             session.finishTasksAndInvalidate()
             throw error
         }
-        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+        let http = response as? HTTPURLResponse
+        let statusCode = http?.statusCode ?? -1
         // [T-quota-codex-subscription] Passive usage: the Codex backend reports the
         // subscription's windows on every reply, errors (429) included.
-        if isCodexOAuth, let http = response as? HTTPURLResponse {
+        if isCodexOAuth, let http {
             QuotaObservationSink.recordCodexResponse(instanceId: quotaInstanceId, response: http)
         }
 
@@ -1183,7 +1188,8 @@ final class OpenAIProvider: LLMProvider {
             var body = ""
             for try await line in byteStream.lines { body += line }
             session.finishTasksAndInvalidate()
-            let mapped = mapHTTPError(statusCode: statusCode, body: body)
+            let mapped = mapHTTPError(statusCode: statusCode, body: body,
+                                      retryAfter: http?.value(forHTTPHeaderField: "Retry-After"))
             // Carry the raw text alongside, so the mender can read the vendor's
             // business code and message instead of a rewritten sentence.
             throw RefusedBodyError(text: body, status: statusCode, underlying: mapped)
@@ -1969,7 +1975,8 @@ final class OpenAIProvider: LLMProvider {
             // request timeout on streamingSession lets the generation
             // finish.
             let (data, response) = try await streamingSession.data(for: request)
-            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            let http = response as? HTTPURLResponse
+            let statusCode = http?.statusCode ?? -1
 
             #if DEBUG
             let httpResp = response as? HTTPURLResponse
@@ -1997,7 +2004,8 @@ final class OpenAIProvider: LLMProvider {
 
             guard (200..<300).contains(statusCode) else {
                 let responseBody = String(data: data, encoding: .utf8) ?? ""
-                throw mapHTTPError(statusCode: statusCode, body: responseBody)
+                throw mapHTTPError(statusCode: statusCode, body: responseBody,
+                                   retryAfter: http?.value(forHTTPHeaderField: "Retry-After"))
             }
 
             let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
@@ -2169,7 +2177,8 @@ final class OpenAIProvider: LLMProvider {
         // — /images/edits is as slow as /images/generations; the 60s
         // default on URLSession.shared aborts long edits with -1001.
         let (data, response) = try await streamingSession.data(for: request)
-        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+        let http = response as? HTTPURLResponse
+        let statusCode = http?.statusCode ?? -1
 
         #if DEBUG
         let httpResp = response as? HTTPURLResponse
@@ -2183,7 +2192,8 @@ final class OpenAIProvider: LLMProvider {
 
         guard (200..<300).contains(statusCode) else {
             let responseBody = String(data: data, encoding: .utf8) ?? ""
-            throw mapHTTPError(statusCode: statusCode, body: responseBody)
+            throw mapHTTPError(statusCode: statusCode, body: responseBody,
+                               retryAfter: http?.value(forHTTPHeaderField: "Retry-After"))
         }
 
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
@@ -2404,9 +2414,18 @@ final class OpenAIProvider: LLMProvider {
         return .providerError(message: error.localizedDescription)
     }
 
-    func mapHTTPError(statusCode: Int, body: String) -> LLMError {
+    func mapHTTPError(statusCode: Int, body: String, retryAfter: String? = nil) -> LLMError {
         if statusCode == 401 || statusCode == 403 { return .invalidAPIKey(detail: "HTTP \(statusCode): \(String(body.prefix(200)))") }
-        if statusCode == 429 { return .rateLimited }
+        // [T-rate-limit-detail] Keep the gateway's own words. This used to be
+        // `return .rateLimited`, throwing away a body that distinguishes a
+        // spent credit pool from a concurrency cap from a per-minute cap —
+        // so every one of them read "Rate limited — please try again later".
+        if statusCode == 429 {
+            return .rateLimited(
+                detail: RateLimitDetail.describe(body: body),
+                retryAfter: RateLimitDetail.parseRetryAfter(retryAfter)
+            )
+        }
 
         // Transient server errors: retry same model, do not trigger group fallback.
         let transientStatusCodes: Set<Int> = [500, 502, 503, 504, 529]

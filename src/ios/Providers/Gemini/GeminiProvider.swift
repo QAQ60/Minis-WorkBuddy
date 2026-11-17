@@ -678,7 +678,9 @@ final class GeminiProvider: LLMProvider {
             throw LLMError.invalidAPIKey(detail: "Gemini HTTP \(http.statusCode): \(String(body.prefix(200)))")
         }
         if http.statusCode == 429 {
-            throw LLMError.rateLimited
+            throw LLMError.rateLimited(
+                detail: RateLimitDetail.describe(body: body),
+                retryAfter: RateLimitDetail.parseRetryAfter(http.value(forHTTPHeaderField: "Retry-After")))
         }
         let transientStatusCodes: Set<Int> = [500, 502, 503, 504, 529]
         if transientStatusCodes.contains(http.statusCode) {
@@ -696,7 +698,12 @@ final class GeminiProvider: LLMProvider {
         }
 
         if http.statusCode == 429 {
-            throw LLMError.rateLimited
+            // `body` is not decoded yet at this point in the function — decode
+            // it here so the reason is not thrown away with the 429.
+            let bodyStr = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            throw LLMError.rateLimited(
+                detail: RateLimitDetail.describe(body: bodyStr),
+                retryAfter: RateLimitDetail.parseRetryAfter(http.value(forHTTPHeaderField: "Retry-After")))
         }
 
         guard (200..<300).contains(http.statusCode) else {

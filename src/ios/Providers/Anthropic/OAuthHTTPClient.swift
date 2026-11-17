@@ -111,6 +111,10 @@ final class LastAPIErrorBody: @unchecked Sendable {
     private let lock = NSLock()
     private var _body: String?
     private var _statusCode: Int?
+    // [T-rate-limit-detail] Captured with the status for the same reason: a 429
+    // without its `Retry-After` can only say "later", and the header is gone
+    // by the time the SDK surfaces its description string.
+    private var _retryAfter: String?
 
     /// [T-anthropic-status-not-substring] The status is captured ALONGSIDE the
     /// body because the SwiftAnthropic SDK surfaces only a description string,
@@ -119,10 +123,11 @@ final class LastAPIErrorBody: @unchecked Sendable {
     /// read as a transient 5xx and was retried on a model that could never
     /// succeed. Every capture site already holds the real `HTTPURLResponse`,
     /// so the true status only needed carrying across.
-    func set(_ body: String?, statusCode: Int? = nil) {
+    func set(_ body: String?, statusCode: Int? = nil, retryAfter: String? = nil) {
         lock.lock()
         _body = body
         _statusCode = statusCode
+        _retryAfter = retryAfter
         lock.unlock()
     }
 
@@ -138,12 +143,13 @@ final class LastAPIErrorBody: @unchecked Sendable {
     /// Atomically read and clear the last error body together with the HTTP
     /// status it arrived with. Use this instead of `take()` when the status
     /// drives a classification decision.
-    func takeWithStatus() -> (body: String?, statusCode: Int?) {
+    func takeWithStatus() -> (body: String?, statusCode: Int?, retryAfter: String?) {
         lock.lock()
         defer { lock.unlock() }
-        let val = (_body, _statusCode)
+        let val = (_body, _statusCode, _retryAfter)
         _body = nil
         _statusCode = nil
+        _retryAfter = nil
         return val
     }
 }
@@ -899,7 +905,8 @@ private final class OAuthURLProtocol: URLProtocol, URLSessionDataDelegate {
                     #else
                     logger.error("[URLProtocol] Error body (\(http.statusCode))")
                     #endif
-                    LastAPIErrorBody.shared.set(body, statusCode: http.statusCode)
+                    LastAPIErrorBody.shared.set(body, statusCode: http.statusCode,
+                    retryAfter: http.value(forHTTPHeaderField: "Retry-After"))
                     #if DEBUG
                     AgentRequestTrace.shared.setHTTPResponse(status: http.statusCode, body: body)
                     AgentRequestTrace.shared.step("urlprotocol.errorBody", detail: String(body.prefix(500)))
@@ -1676,7 +1683,8 @@ private final class EagerStreamingURLProtocol: URLProtocol, URLSessionDataDelega
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         if let http = dataTask.response as? HTTPURLResponse, http.statusCode >= 400 {
             if let body = String(data: data, encoding: .utf8) {
-                LastAPIErrorBody.shared.set(body, statusCode: http.statusCode)
+                LastAPIErrorBody.shared.set(body, statusCode: http.statusCode,
+                    retryAfter: http.value(forHTTPHeaderField: "Retry-After"))
             }
         }
         #if DEBUG
@@ -1855,7 +1863,8 @@ private final class DualAuthURLProtocol: URLProtocol, URLSessionDataDelegate {
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         if let http = dataTask.response as? HTTPURLResponse, http.statusCode >= 400 {
             if let body = String(data: data, encoding: .utf8) {
-                LastAPIErrorBody.shared.set(body, statusCode: http.statusCode)
+                LastAPIErrorBody.shared.set(body, statusCode: http.statusCode,
+                    retryAfter: http.value(forHTTPHeaderField: "Retry-After"))
             }
         }
         #if DEBUG

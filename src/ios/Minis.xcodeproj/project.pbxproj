@@ -100,6 +100,7 @@
 		E51000004 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E51000014 /* Preview Assets.xcassets */; };
 		E52000001 /* LLMTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E52000011 /* LLMTypes.swift */; };
 		E52000002 /* LLMError.swift in Sources */ = {isa = PBXBuildFile; fileRef = E52000012 /* LLMError.swift */; };
+		E5RLD001B /* RateLimitDetail.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5RLD001F /* RateLimitDetail.swift */; };
 		E52000003 /* LLMProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = E52000013 /* LLMProvider.swift */; };
 		E52000004 /* AnthropicProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = E52000014 /* AnthropicProvider.swift */; };
 		E52000005 /* SwiftAnthropic in Frameworks */ = {isa = PBXBuildFile; productRef = E52000021 /* SwiftAnthropic */; };
@@ -874,6 +875,7 @@
 		E51000014 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
 		E52000011 /* LLMTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMTypes.swift; sourceTree = "<group>"; };
 		E52000012 /* LLMError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMError.swift; sourceTree = "<group>"; };
+		E5RLD001F /* RateLimitDetail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RateLimitDetail.swift; sourceTree = "<group>"; };
 		E52000013 /* LLMProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMProvider.swift; sourceTree = "<group>"; };
 		E52000014 /* AnthropicProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnthropicProvider.swift; sourceTree = "<group>"; };
 		E52000015 /* OAuthHTTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OAuthHTTPClient.swift; sourceTree = "<group>"; };
@@ -1761,6 +1763,7 @@
 				E5QTAGRP /* Quota */,
 				E52000011 /* LLMTypes.swift */,
 				E52000012 /* LLMError.swift */,
+				E5RLD001F /* RateLimitDetail.swift */,
 				E5OARC030 /* OAuthRefreshCoordinator.swift */,
 				E5OARC031 /* OAuthRefreshSingleFlight.swift */,
 				E52000013 /* LLMProvider.swift */,
@@ -3149,6 +3152,7 @@
 				E5SHV0004 /* MountDetailView.swift in Sources */,
 				E52000001 /* LLMTypes.swift in Sources */,
 				E52000002 /* LLMError.swift in Sources */,
+				E5RLD001B /* RateLimitDetail.swift in Sources */,
 				E52000003 /* LLMProvider.swift in Sources */,
 				E5F00001 /* LLMProviderFactory.swift in Sources */,
 				E52000004 /* AnthropicProvider.swift in Sources */,

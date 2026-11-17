@@ -568,7 +568,12 @@ final class AnthropicProvider: LLMProvider {
             case 401, 403:
                 return .invalidAPIKey(detail: detail())
             case 429:
-                return .rateLimited
+                // [T-rate-limit-detail] Anthropic's 429 carries its reason in
+                // the body (and `Retry-After` in the headers); keep both so the
+                // banner can say which limit was hit and for how long.
+                return .rateLimited(
+                    detail: capturedBody.isEmpty ? detail() : RateLimitDetail.describe(body: capturedBody),
+                    retryAfter: captured.retryAfter)
             case 500, 502, 503, 504, 529:
                 return .transientError(message: detail(), statusCode: status)
             default:
@@ -590,7 +595,12 @@ final class AnthropicProvider: LLMProvider {
             case 401, 403:
                 return .invalidAPIKey(detail: detail())
             case 429:
-                return .rateLimited
+                // [T-rate-limit-detail] Anthropic's 429 carries its reason in
+                // the body (and `Retry-After` in the headers); keep both so the
+                // banner can say which limit was hit and for how long.
+                return .rateLimited(
+                    detail: capturedBody.isEmpty ? detail() : RateLimitDetail.describe(body: capturedBody),
+                    retryAfter: captured.retryAfter)
             case 500, 502, 503, 504, 529:
                 return .transientError(message: detail(), statusCode: status)
             default:
@@ -605,7 +615,7 @@ final class AnthropicProvider: LLMProvider {
             return .invalidAPIKey(detail: detail())
         }
         if description.lowercased().contains("rate limit") {
-            return .rateLimited
+            return .rateLimited(detail: capturedBody.isEmpty ? "" : RateLimitDetail.describe(body: capturedBody))
         }
 
         // Try to extract a detailed message from the captured error body first,
