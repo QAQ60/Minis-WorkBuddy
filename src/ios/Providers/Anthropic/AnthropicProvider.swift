@@ -562,6 +562,24 @@ final class AnthropicProvider: LLMProvider {
                 ?? Self.extractAPIErrorMessage(from: description)
         }
 
+        /// [T-rate-limit-detail] The captured body is optional (a transport
+        /// failure never produces one), so both the "is there a body" test and
+        /// the parse go through here rather than touching `capturedBody`
+        /// directly.
+        func rateLimitDetail() -> String {
+            guard let body = capturedBody else { return detail() }
+            let parsed = RateLimitDetail.describe(body: body)
+            // An unparseable body still beats the SDK's generic wording only if
+            // it produced something; `describe` guarantees non-empty, so fall
+            // back to `detail()` when the body was blank.
+            return body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? detail() : parsed
+        }
+
+        /// `Retry-After` arrives as the raw header text; the error wants seconds.
+        var rateLimitRetryAfter: TimeInterval? {
+            RateLimitDetail.parseRetryAfter(captured.retryAfter)
+        }
+
         // Preferred path: a real status code. Classify purely from it.
         if let status = captured.statusCode {
             switch status {
@@ -571,9 +589,8 @@ final class AnthropicProvider: LLMProvider {
                 // [T-rate-limit-detail] Anthropic's 429 carries its reason in
                 // the body (and `Retry-After` in the headers); keep both so the
                 // banner can say which limit was hit and for how long.
-                return .rateLimited(
-                    detail: capturedBody.isEmpty ? detail() : RateLimitDetail.describe(body: capturedBody),
-                    retryAfter: captured.retryAfter)
+                return .rateLimited(detail: rateLimitDetail(),
+                                    retryAfter: rateLimitRetryAfter)
             case 500, 502, 503, 504, 529:
                 return .transientError(message: detail(), statusCode: status)
             default:
@@ -598,9 +615,8 @@ final class AnthropicProvider: LLMProvider {
                 // [T-rate-limit-detail] Anthropic's 429 carries its reason in
                 // the body (and `Retry-After` in the headers); keep both so the
                 // banner can say which limit was hit and for how long.
-                return .rateLimited(
-                    detail: capturedBody.isEmpty ? detail() : RateLimitDetail.describe(body: capturedBody),
-                    retryAfter: captured.retryAfter)
+                return .rateLimited(detail: rateLimitDetail(),
+                                    retryAfter: rateLimitRetryAfter)
             case 500, 502, 503, 504, 529:
                 return .transientError(message: detail(), statusCode: status)
             default:
@@ -615,7 +631,7 @@ final class AnthropicProvider: LLMProvider {
             return .invalidAPIKey(detail: detail())
         }
         if description.lowercased().contains("rate limit") {
-            return .rateLimited(detail: capturedBody.isEmpty ? "" : RateLimitDetail.describe(body: capturedBody))
+            return .rateLimited(detail: rateLimitDetail(), retryAfter: rateLimitRetryAfter)
         }
 
         // Try to extract a detailed message from the captured error body first,
