@@ -124,9 +124,16 @@ jobs:
         run: |
           set -eo pipefail
           mkdir -p build
+          # Stamp the build number with the run date so two IPAs can be told
+          # apart on-device (Settings → About). Previously every build shipped
+          # as 1.0(2), which made "did you install the new one?" unanswerable —
+          # a stale-cache LiveContainer install and a fresh build looked alike.
+          BUILD_NUM=$(date -u +%y%m%d%H)
+          echo "build number: $BUILD_NUM"
           xcodebuild -project src/ios/Minis.xcodeproj -scheme Minis \
             -configuration Release -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION=$BUILD_NUM \
             -derivedDataPath build/DerivedData build > build/xcodebuild.log 2>&1 \
             || { sh scripts/ci-diagnostic-errors.sh build/xcodebuild.log; exit 1; }
           tail -3 build/xcodebuild.log
