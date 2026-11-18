@@ -142,9 +142,9 @@ struct MinisApp: App {
         // means even a mis-probe downstream cannot resurrect the dead path —
         // the next engine `start()` bails on its own `isEnabled` guard.
         //
-        // Runs right AFTER the crash handler is installed, so even this probe
-        // failing unexpectedly leaves a breadcrumb. The probe itself wraps all
-        // CloudKit calls in a single @try/@catch.
+        // Runs right AFTER the crash handler is installed. The probe is a pure
+        // file read of the embedded provisioning profile — it never calls any
+        // CloudKit API, so it cannot abort the launch it is meant to protect.
         if !MinisCloudKitAvailable() {
             let ud = UserDefaults.standard
             ud.set(false, forKey: "cloudSync.enabled")

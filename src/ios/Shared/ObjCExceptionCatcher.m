@@ -1,5 +1,5 @@
 #import "ObjCExceptionCatcher.h"
-#import <CloudKit/CloudKit.h> // still linked; probe no longer constructs CK objects
+// No CloudKit import: this probe must never call a CloudKit API.
 
 BOOL MinisCatchObjCException(void (NS_NOESCAPE ^block)(void), NSString *_Nullable *_Nullable reason) {
     @try {
@@ -21,31 +21,43 @@ BOOL MinisCloudKitAvailable(void) {
     if (_ckChecked) return _ckAvailable;
     _ckChecked = YES;
     NSString *reason = nil;
+    BOOL entitled = NO;
 
-    // [T-icloud-no-entitlement-container] Do NOT try to construct CKContainer
-    // or touch privateCloudDatabase here. In a container runtime those calls
-    // can return non-nil (a false "available") yet abort later when the real
-    // engine resolves the account — and an NSException raised at that depth is
-    // not reliably catchable. Worse, running this probe at app init meant the
-    // wrong answer here decided whether persisted flags were cleared.
+    // [T-icloud-no-entitlement-container] PURELY STATIC — no CloudKit call at
+    // all. Every earlier version probed by actually calling CloudKit
+    // (CKContainer / privateCloudDatabase / ubiquityIdentityToken) at app
+    // startup. Under a container runtime those calls either abort outright
+    // (@try/@catch cannot stop an abort) or return a false "available", and the
+    // probe itself became the launch crash — which is why each fix round made
+    // "opens then crashes" worse into "cannot even open".
     //
-    // `ubiquityIdentityToken` is Apple's own "is iCloud usable here?" query:
-    // it is a synchronous, non-throwing read of the ubiquity identity, and it
-    // returns nil when the process lacks the iCloud entitlement (or iCloud is
-    // not configured). It never touches a CKDatabase, so it cannot abort. No
-    // token ⇒ sync cannot work ⇒ treat CloudKit as unavailable.
-    id token = nil;
-    @try {
-        token = [[NSFileManager defaultManager] ubiquityIdentityToken];
-    } @catch (NSException *ex) {
-        reason = [NSString stringWithFormat:@"ubiquityIdentityToken raised %@: %@",
-                  ex.name, ex.reason ?: @""];
+    // Instead: read the app's own embedded provisioning profile, which the
+    // code-signature embeds as a CMS-signed plist whose payload is NOT
+    // encrypted — a plain byte search finds the entitlement key. A container
+    // runtime re-signs WITHOUT iCloud entitlements, so the key is absent.
+    // This is a file read: it cannot raise, cannot touch CloudKit, cannot abort.
+    NSString *profile = [[NSBundle mainBundle] pathForResource:@"embedded"
+                                                        ofType:@"mobileprovision"];
+    if (profile) {
+        NSData *data = [NSData dataWithContentsOfFile:profile];
+        if (data) {
+            NSString *text = [[NSString alloc] initWithData:data
+                                                   encoding:NSISOLatin1StringEncoding];
+            entitled = [text rangeOfString:@"com.apple.developer.icloud-services"].location
+                       != NSNotFound;
+        }
+        if (!entitled) {
+            reason = @"app provisioning profile has no com.apple.developer.icloud-services "
+                      @"entitlement (re-signed by a container runtime?)";
+        }
+    } else {
+        // No embedded profile at all (ad-hoc / container re-sign). That is the
+        // same situation as LiveContainer — no iCloud entitlement — so treat it
+        // as unavailable rather than guessing.
+        reason = @"no embedded provisioning profile with iCloud entitlements";
     }
-    if (token == nil && reason == nil) {
-        reason = @"no iCloud ubiquity identity (missing entitlement or not signed in)";
-    }
-    _ckAvailable = (token != nil && reason == nil);
 
+    _ckAvailable = entitled;
     _ckReason = reason;
     if (!_ckAvailable) {
         NSLog(@"[CloudKit] unavailable in this process (%@) — sync stays disabled", reason ?: @"unknown");
