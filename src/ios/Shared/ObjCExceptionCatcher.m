@@ -1,7 +1,5 @@
 #import "ObjCExceptionCatcher.h"
 #import <CloudKit/CloudKit.h>
-#import <Security/Security.h>
-#import <os/lock.h>
 
 BOOL MinisCatchObjCException(void (NS_NOESCAPE ^block)(void), NSString *_Nullable *_Nullable reason) {
     @try {
@@ -19,65 +17,36 @@ static BOOL _ckAvailable = NO;
 static BOOL _ckChecked = NO;
 static NSString *_ckReason = nil;
 
-/// Does this process actually carry the iCloud entitlement?
-///
-/// [T-icloud-entitlement-authority] This is the authoritative test, and the one
-/// the previous probe was missing. LiveContainer (and any re-signing container
-/// runtime) strips the embedded entitlements, so `com.apple.developer
-/// .icloud-services` is absent — yet `+[CKContainer containerWithIdentifier:]`
-/// may still hand back an object, because the exception is raised later when
-/// CloudKit resolves the account. Reading the entitlement answers the question
-/// without relying on which call happens to throw first.
-///
-/// Returns 1 = present, 0 = absent, -1 = could not determine (caller falls back
-/// to the behavioural probe below).
-static int MinisHasICloudEntitlement(void) {
-    SecTaskRef task = SecTaskCreateFromSelf(kCFAllocatorDefault);
-    if (task == NULL) return -1;
-    CFTypeRef services = SecTaskCopyValueForEntitlement(
-        task, CFSTR("com.apple.developer.icloud-services"), NULL);
-    CFRelease(task);
-    if (services == NULL) return 0;
-    BOOL ok = NO;
-    if (CFGetTypeID(services) == CFArrayGetTypeID()) {
-        ok = CFArrayGetCount((CFArrayRef)services) > 0;
-    }
-    CFRelease(services);
-    return ok ? 1 : 0;
-}
-
 BOOL MinisCloudKitAvailable(void) {
     if (_ckChecked) return _ckAvailable;
     _ckChecked = YES;
     NSString *reason = nil;
 
-    int ent = MinisHasICloudEntitlement();
-    if (ent == 0) {
-        // Definitive: no entitlement, CloudKit would abort the process.
-        _ckAvailable = NO;
-        reason = @"com.apple.developer.icloud-services entitlement is missing "
-                 @"(app was re-signed by a container runtime?)";
-        _ckReason = reason;
-        NSLog(@"[CloudKit] unavailable in this process (%@) — sync stays disabled", reason);
-        return NO;
-    }
-
-    // Entitlement present (or undeterminable) — confirm behaviourally by probing
-    // every call the sync stack makes on the way to a live engine, not just the
-    // container construction that the previous probe stopped at.
+    // [T-icloud-no-entitlement-container] Probe EVERY hop the sync stack takes
+    // on the way to a live engine, inside one @try.
+    //
+    // The previous probe only constructed `CKContainer(identifier:)` and asked
+    // whether it was non-nil. Under a container runtime that specific call can
+    // succeed while a later one raises CKException — so a user whose toggle was
+    // already persisted as `true` (an OVER-INSTALL over old data, unlike a clean
+    // install where the flag is false and nothing is reached) passed the probe,
+    // reached the real CloudKit access, and was SIGABRT'd at launch. That is
+    // exactly the over-install / delete-and-reinstall asymmetry reported.
+    //
+    // The hop that matters is `privateCloudDatabase`: it resolves the account,
+    // which is what the entitlement gates.
     @try {
         CKContainer *container = [CKContainer containerWithIdentifier:@"iCloud.com.openminis.app"];
         if (container == nil) {
             reason = @"CKContainer returned nil";
-        } else if (container.privateCloudDatabase == nil) {
-            reason = @"privateCloudDatabase returned nil";
-        } else if (@available(iOS 17.0, *)) {
-            CKSyncEngineConfiguration *cfg =
-                [[CKSyncEngineConfiguration alloc] initWithDatabase:container.privateCloudDatabase
-                                                   stateSerialization:nil
-                                                           delegate:[[NSObject alloc] init]];
-            if ([[CKSyncEngine alloc] initWithConfiguration:cfg] == nil) {
-                reason = @"CKSyncEngine returned nil";
+        } else {
+            // Resolving the private database is where an entitlement-less
+            // process trips: CloudKit resolves the account at this point. This
+            // is one hop FURTHER than the old probe, which is the gap that let an
+            // over-install (flag already true) reach the real crash.
+            CKDatabase *priv = container.privateCloudDatabase;
+            if (priv == nil) {
+                reason = @"privateCloudDatabase returned nil";
             }
         }
         _ckAvailable = (reason == nil);

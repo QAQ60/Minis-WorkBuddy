@@ -551,7 +551,16 @@ final class CloudSyncEngine: ObservableObject {
         // (uncatchable from Swift). Stay disabled instead of aborting.
         guard MinisCloudKitAvailable() else {
             syncStatus = .disabled
-            logger.warning("[CloudSync] CloudKit unavailable in this process (no iCloud entitlement — container runtime?) — staying disabled")
+            // [T-icloud-no-entitlement-container] Clear the flag as v2 does, on
+            // BOTH the property (which the Settings toggle binds to) and its
+            // UserDefaults mirror, or every launch re-walks this path to the same
+            // dead end while the UI still claims sync is on.
+            //
+            // Safe to assign: `didSet`'s false branch only tears down state —
+            // `syncEngine = nil`, `.disabled`, stops the scanner/timer — and
+            // never calls `start()`, so this cannot loop back into the guard.
+            if isEnabled { isEnabled = false }
+            logger.warning("[CloudSync] CloudKit unavailable in this process (\(MinisCloudKitUnavailableReason() ?? "unknown")) — staying disabled and clearing the flag")
             return
         }
 
