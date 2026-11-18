@@ -418,19 +418,55 @@ extension AIChatViewModel {
     /// Everything under this path is exposed to iOS Files via the replicated
     /// FileProvider extension. Keep ONLY user-facing subdirs (shared, skills,
     /// memory) here — anything else leaks into "On My iPhone → Minis".
+    ///
+    /// [T-appgroup-unavailable-fallback] The App Group name `group.com.openminis.app`
+    /// is tied to the upstream author's Apple account: a re-signed build with a
+    /// different bundle id (self-signing, or a paid cert on a new id) has no
+    /// rights to it, so `containerURL` returns nil. Force-unwrapping here was the
+    /// startup crash the user kept hitting — "App 一打开就崩" — because every
+    /// one of these dirs derives from this root. When the App Group is
+    /// unavailable we fall back to the app's PRIVATE container: iSH, shared/
+    /// skills/memory and every other consumer keep working; only the
+    /// FileProvider replication (iOS Files app visibility) is lost, which a
+    /// re-signed build could not use anyway.
+    ///
+    /// The fallback base is the app's Library directory, not the App Group:
+    /// Library/MinisChat/MinisFileProvider. The suffix "MinisFileProvider" is
+    /// kept so all derived subdirs (shared/skills/memory/MinisConfig) land in
+    /// the same relative layout as the App Group case, which downstream code
+    /// (FileBrowserView, AppGroupChangeWatcher, mountMinis) assumes.
     nonisolated static var minisAppGroupRoot: URL {
-        FileManager.default.containerURL(
+        if let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: SharedContainerStore.appGroupID
-        )!.appendingPathComponent("MinisFileProvider", isDirectory: true)
+        ) {
+            return container.appendingPathComponent("MinisFileProvider", isDirectory: true)
+        }
+        let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+        return library
+            .appendingPathComponent("MinisChat", isDirectory: true)
+            .appendingPathComponent("MinisFileProvider", isDirectory: true)
     }
 
     /// App Group subdirectory for private metadata that must NOT be exposed
     /// to iOS Files (mounted-folders.json, FileProvider extension logs, etc).
     /// Sibling of `minisAppGroupRoot` inside the same App Group container.
+    ///
+    /// [T-appgroup-unavailable-fallback] Same fallback as `minisAppGroupRoot`:
+    /// without an App Group, MinisConfig lives under Library/MinisChat/MinisConfig
+    /// instead of the group container, so mounted-folders.json and the MCP
+    /// servers.json still have somewhere stable to live.
     nonisolated static var minisConfigRoot: URL {
-        let url = FileManager.default.containerURL(
+        let url: URL
+        if let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: SharedContainerStore.appGroupID
-        )!.appendingPathComponent("MinisConfig", isDirectory: true)
+        ) {
+            url = container.appendingPathComponent("MinisConfig", isDirectory: true)
+        } else {
+            let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+            url = library
+                .appendingPathComponent("MinisChat", isDirectory: true)
+                .appendingPathComponent("MinisConfig", isDirectory: true)
+        }
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }

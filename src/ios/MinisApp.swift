@@ -1199,7 +1199,14 @@ struct MinisApp: App {
     private static func migrateSharedDirToAppGroup() {
         let fm = FileManager.default
         let library = fm.urls(for: .libraryDirectory, in: .userDomainMask).first!
-        let container = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.com.openminis.app")!
+        // [T-appgroup-unavailable-fallback] Force-unwrap here was a startup
+        // crash on any re-signed build (no rights to the hard-coded group
+        // name). Guard instead: with no App Group this whole migration is a
+        // no-op — the dirs it would move live in Library/MinisChat already.
+        guard let container = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.com.openminis.app") else {
+            lifecycleLog.info("[FileProvider] migrateSharedDirToAppGroup skipped — App Group unavailable (re-signed build)")
+            return
+        }
 
         let migrations: [(source: URL, dest: URL, label: String)] = [
             // Legacy Library/MinisChat/shared → new shared

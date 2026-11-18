@@ -12,11 +12,27 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     private static let log = OSLog(subsystem: "com.openminis.app.FileProvider", category: "Extension")
 
     /// Root directory for all FileProvider-visible files in the App Group container.
+    ///
+    /// [T-appgroup-unavailable-fallback] Same fallback as the main app's
+    /// `minisAppGroupRoot`: a re-signed build has no rights to the hard-coded
+    /// group name, so `containerURL` returns nil and force-unwrapping was the
+    /// FileProvider-extension-side startup crash. Fall back to the app's
+    /// private container so the extension at least boots — it cannot actually
+    /// serve files without the group (iOS Files will show nothing), but a
+    /// crash here takes the whole FileProvider stack down, not just the
+    /// visibility feature.
     static var providerRoot: URL {
-        let container = FileManager.default.containerURL(
+        let url: URL
+        if let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: "group.com.openminis.app"
-        )!
-        let url = container.appendingPathComponent("MinisFileProvider", isDirectory: true)
+        ) {
+            url = container.appendingPathComponent("MinisFileProvider", isDirectory: true)
+        } else {
+            let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+            url = library
+                .appendingPathComponent("MinisChat", isDirectory: true)
+                .appendingPathComponent("MinisFileProvider", isDirectory: true)
+        }
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
