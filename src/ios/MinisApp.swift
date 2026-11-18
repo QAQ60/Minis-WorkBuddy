@@ -132,6 +132,27 @@ struct MinisApp: App {
         //
         // `install` is idempotent, so the later onAppLaunch() call is a no-op.
         CrashSignalHandler.install()
+        // [T-icloud-no-entitlement-container] LAST_line of defence, and the one
+        // that does not depend on any probe being right: if CloudKit is
+        // unavailable, clear BOTH persisted sync flags here, before any engine
+        // or view reads them. An over-install over a library where the sync
+        // toggle had been ON keeps `cloudSync.enabled`/`.v2.enabled` = true in
+        // UserDefaults; on a container runtime every launch then walks into
+        // CloudKit and SIGABRTs. Clearing them at the very top of app init
+        // means even a mis-probe downstream cannot resurrect the dead path —
+        // the next engine `start()` bails on its own `isEnabled` guard.
+        //
+        // Runs right AFTER the crash handler is installed, so even this probe
+        // failing unexpectedly leaves a breadcrumb. The probe itself wraps all
+        // CloudKit calls in a single @try/@catch.
+        if !MinisCloudKitAvailable() {
+            let ud = UserDefaults.standard
+            ud.set(false, forKey: "cloudSync.enabled")
+            ud.set(false, forKey: "cloudSync.v2.enabled")
+            NSLog("[CloudKit] cleared persisted sync flags at app init (unavailable: %@)",
+                  MinisCloudKitUnavailableReason() ?? "unknown")
+        }
+
         // [T-crash-breadcrumbs] Rotate the previous run's breadcrumbs and start
         // this run's ring + 15 s resource sampling, before anything else runs.
         CrashBreadcrumbs.start()
