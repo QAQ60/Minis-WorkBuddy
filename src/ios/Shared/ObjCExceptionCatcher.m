@@ -1,5 +1,5 @@
 #import "ObjCExceptionCatcher.h"
-#import <CloudKit/CloudKit.h>
+#import <CloudKit/CloudKit.h> // still linked; probe no longer constructs CK objects
 
 BOOL MinisCatchObjCException(void (NS_NOESCAPE ^block)(void), NSString *_Nullable *_Nullable reason) {
     @try {
@@ -22,38 +22,29 @@ BOOL MinisCloudKitAvailable(void) {
     _ckChecked = YES;
     NSString *reason = nil;
 
-    // [T-icloud-no-entitlement-container] Probe EVERY hop the sync stack takes
-    // on the way to a live engine, inside one @try.
+    // [T-icloud-no-entitlement-container] Do NOT try to construct CKContainer
+    // or touch privateCloudDatabase here. In a container runtime those calls
+    // can return non-nil (a false "available") yet abort later when the real
+    // engine resolves the account — and an NSException raised at that depth is
+    // not reliably catchable. Worse, running this probe at app init meant the
+    // wrong answer here decided whether persisted flags were cleared.
     //
-    // The previous probe only constructed `CKContainer(identifier:)` and asked
-    // whether it was non-nil. Under a container runtime that specific call can
-    // succeed while a later one raises CKException — so a user whose toggle was
-    // already persisted as `true` (an OVER-INSTALL over old data, unlike a clean
-    // install where the flag is false and nothing is reached) passed the probe,
-    // reached the real CloudKit access, and was SIGABRT'd at launch. That is
-    // exactly the over-install / delete-and-reinstall asymmetry reported.
-    //
-    // The hop that matters is `privateCloudDatabase`: it resolves the account,
-    // which is what the entitlement gates.
+    // `ubiquityIdentityToken` is Apple's own "is iCloud usable here?" query:
+    // it is a synchronous, non-throwing read of the ubiquity identity, and it
+    // returns nil when the process lacks the iCloud entitlement (or iCloud is
+    // not configured). It never touches a CKDatabase, so it cannot abort. No
+    // token ⇒ sync cannot work ⇒ treat CloudKit as unavailable.
+    id token = nil;
     @try {
-        CKContainer *container = [CKContainer containerWithIdentifier:@"iCloud.com.openminis.app"];
-        if (container == nil) {
-            reason = @"CKContainer returned nil";
-        } else {
-            // Resolving the private database is where an entitlement-less
-            // process trips: CloudKit resolves the account at this point. This
-            // is one hop FURTHER than the old probe, which is the gap that let an
-            // over-install (flag already true) reach the real crash.
-            CKDatabase *priv = container.privateCloudDatabase;
-            if (priv == nil) {
-                reason = @"privateCloudDatabase returned nil";
-            }
-        }
-        _ckAvailable = (reason == nil);
+        token = [[NSFileManager defaultManager] ubiquityIdentityToken];
     } @catch (NSException *ex) {
-        _ckAvailable = NO;
-        reason = [NSString stringWithFormat:@"%@: %@", ex.name, ex.reason ?: @""];
+        reason = [NSString stringWithFormat:@"ubiquityIdentityToken raised %@: %@",
+                  ex.name, ex.reason ?: @""];
     }
+    if (token == nil && reason == nil) {
+        reason = @"no iCloud ubiquity identity (missing entitlement or not signed in)";
+    }
+    _ckAvailable = (token != nil && reason == nil);
 
     _ckReason = reason;
     if (!_ckAvailable) {
