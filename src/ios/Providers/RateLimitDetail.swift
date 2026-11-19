@@ -55,21 +55,29 @@ enum RateLimitDetail {
         if let data = trimmed.data(using: .utf8),
            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
 
-            // 1. OpenAI-compatible: error is an object with message/code/type.
+            // 1. OpenAI-compatible: error is an object with message/code/type,
+            //    and WorkBuddy nests the real 429 reason one level deeper under
+            //    `error.data` (e.g. {"error":{"data":{"code":14018,
+            //    "msg":"额度已用尽…"}}}}). Search both levels so a bodyless-looking
+            //    429 no longer degrades to "no reason given by the gateway".
             if let error = root["error"] as? [String: Any] {
+                let nested = error["data"] as? [String: Any]
                 var pieces: [String] = []
-                if let message = error["message"] as? String, !message.isEmpty {
-                    pieces.append(message)
-                }
+                // Prefer the nested message, then the outer one.
+                let message = (nested?["msg"] as? String)
+                    ?? (nested?["message"] as? String)
+                    ?? (error["message"] as? String)
+                    ?? ""
+                if !message.isEmpty { pieces.append(message) }
                 // `code` and `type` are sometimes integers, sometimes strings,
                 // and carry the only stable identifier the provider documents.
+                // Check the nested data first — that's where WorkBuddy's
+                // business code (14018 etc.) actually lives.
                 for key in ["code", "type"] {
-                    if let value = error[key], let text = codeText(value) {
-                        // Do not repeat a code that the message already contains
-                        // — "insufficient_quota (insufficient_quota)" reads as a
-                        // bug rather than a diagnostic.
+                    let value = nested?[key] ?? error[key]
+                    if let value, let text = codeText(value), text != "0" {
                         if !pieces.contains(where: { $0.contains(text) }) {
-                            pieces.append(text)
+                            pieces.append("code \(text)")
                         }
                     }
                 }
