@@ -443,8 +443,12 @@ enum LLMProviderFactory {
             provider.appendV1Suffix = false
             provider.requiresStreaming = true
             provider.extraHeaders.merge(site.clientHeaders) { _, new in new }
-            provider.perRequestHeaders = { _ in
-                WorkBuddyOAuthManager.makeConversationHeaders(instanceId: iid, site: site)
+            // [T-workbuddy-stable-conversation-id] Pass the request body so the
+            // conversation/turn ids derive from the chat's messages instead of
+            // being random per call (which split one chat into many and tripped
+            // WorkBuddy's rate limit).
+            provider.perRequestHeaders = { body in
+                WorkBuddyOAuthManager.makeConversationHeaders(instanceId: iid, site: site, body: body)
             }
             provider.chatBodyDecorator = { body in
                 WorkBuddyBodyMend.apply(to: &body)

@@ -162,6 +162,14 @@ extension AIChatViewModel {
                 var trimmed = ""
                 var category: String? = nil
                 var folderName: String? = nil
+                // [T-rate-limit-title-budget] A session title is a nicety, not
+                // worth spending the whole account's rate-limit budget on. When
+                // a candidate is rate-limited, retrying 5 MORE candidates just
+                // walks the whole group into the same shared 429 window (all
+                // WorkBuddy members share one account-level limit) and burns
+                // six requests for a title. Skip straight to the local
+                // first-message fallback in that case.
+                var hitRateLimit = false
                 for (idx, entry) in tries.enumerated() {
                     // [T-ios-switch-model-ghost-retry] Re-check before EVERY
                     // candidate, not just at entry: the 1.5s pause below is
@@ -194,7 +202,12 @@ extension AIChatViewModel {
                         }
                     } catch {
                         let reason: String
-                        if let urlErr = error as? URLError {
+                        if let llmErr = error as? LLMError, llmErr.isRateLimited {
+                            reason = "rate-limited"
+                            // [T-rate-limit-title-budget] Stop burning the
+                            // account's shared rate window on a title.
+                            hitRateLimit = true
+                        } else if let urlErr = error as? URLError {
                             reason = urlErr.code == .timedOut ? "timeout" : "request-error(\(urlErr.code.rawValue))"
                         } else if let llmErr = error as? LLMError {
                             reason = "llm-error(\(llmErr.errorDescription ?? "unknown"))"
@@ -202,6 +215,10 @@ extension AIChatViewModel {
                             reason = "error(\(error.localizedDescription))"
                         }
                         logger.error("[TitleGen] FAILED attempt \(idx + 1)/\(tries.count) — model=\(entry.model.id) reason=\(reason)")
+                    }
+                    if hitRateLimit {
+                        logger.warning("[TitleGen] rate-limited — skipping remaining \(tries.count - idx - 1) candidates and using local fallback")
+                        break
                     }
                     // Rate limits recover in seconds and the next candidate is
                     // usually a different provider — a short pause is enough.
