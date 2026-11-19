@@ -427,7 +427,8 @@ enum LLMProviderFactory {
     /// chat base (`<endpoint>/v2`, no `/v1`), the official client's headers,
     /// per-request conversation id headers, mandatory streaming and the
     /// gateway's body mends. See `WorkBuddySite` / `WorkBuddyOAuthManager`.
-    static func makeWorkBuddyProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {
+    static func makeWorkBuddyProvider(instance: ProviderInstance, model: LLMModel,
+                                      resolveSessionId: (@Sendable () -> String?)? = nil) -> OpenAIProvider {
         let site = WorkBuddyOAuthManager.shared.site(
             instanceId: instance.id, customBaseURL: instance.effectiveCustomBaseURL
         )
@@ -447,8 +448,16 @@ enum LLMProviderFactory {
             // conversation/turn ids derive from the chat's messages instead of
             // being random per call (which split one chat into many and tripped
             // WorkBuddy's rate limit).
+            // [T-workbuddy-session-conversation-id] Resolve the real session id
+            // at REQUEST time (draft→session promotion happens after this
+            // provider is built). kwwk keys WorkBuddy's conversation on the
+            // real session id; a made-up hash is not a conversation WorkBuddy
+            // recognises, which计费请求 rejects.
             provider.perRequestHeaders = { body in
-                WorkBuddyOAuthManager.makeConversationHeaders(instanceId: iid, site: site, body: body)
+                WorkBuddyOAuthManager.makeConversationHeaders(
+                    instanceId: iid, site: site, body: body,
+                    sessionId: resolveSessionId?()
+                )
             }
             provider.chatBodyDecorator = { body in
                 WorkBuddyBodyMend.apply(to: &body)

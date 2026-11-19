@@ -126,7 +126,11 @@ extension AIChatViewModel {
         case .kimiCode:
             return OpenAIAgentProvider(provider: wrap(LLMProviderFactory.makeKimiProvider(instance: instance, model: entry.model)))
         case .workBuddy:
-            return OpenAIAgentProvider(provider: wrap(LLMProviderFactory.makeWorkBuddyProvider(instance: instance, model: entry.model)))
+            // [T-workbuddy-session-conversation-id] Hand WorkBuddy the live
+            // session-id resolver so its conversation id is the real session,
+            // matching kwwk/Apelin. Without this the chat's conversation id is
+            // a made-up hash that计费请求 rejects.
+            return OpenAIAgentProvider(provider: wrap(LLMProviderFactory.makeWorkBuddyProvider(instance: instance, model: entry.model, resolveSessionId: resolveSessionId)))
         case .githubCopilot:
             // [T-copilot-no-chat-warning] No warning in the chat.
             //

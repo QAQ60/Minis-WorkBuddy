@@ -63,20 +63,43 @@ enum WorkBuddyConversationID {
 
     /// Build the four ids for a chat request. `request` ids stay random per
     /// call (they name a single HTTP request); conversation/turn ids are
-    /// derived from the messages so WorkBuddy sees one conversation.
-    static func headers(forBody body: [String: Any]) -> [String: String] {
+    /// derived from the chat so WorkBuddy sees one conversation.
+    ///
+    /// [T-workbuddy-session-conversation-id] kwwk (the Apelin engine) keys the
+    /// conversation on the REAL session id first (`session:<id>`), and only
+    /// falls back to the first user message when there is no session. Its own
+    /// comment warns that a made-up id "is what splits one conversation into
+    /// many in the usage detail". A real session id — the one WorkBuddy's own
+    /// client would send — is what a server-side conversation check expects;
+    /// a hash of the first message is not a conversation WorkBuddy knows. Pass
+    /// the session id whenever the chat has one.
+    static func headers(forBody body: [String: Any], sessionId: String? = nil) -> [String: String] {
         let request = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         var headers = [
             "X-Conversation-Message-ID": request,
             "X-Request-ID": request,
         ]
         let messages = body["messages"] as? [[String: Any]] ?? []
-        if let first = firstUserKey(messages), let cid = hex32(kind: "conversation", key: first) {
+
+        // The conversation key: the real session id when present, else the
+        // first user message (kwwk's exact precedence).
+        let conversation: String?
+        if let sid = sessionId?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !sid.isEmpty, !sid.hasPrefix("__new__") {
+            conversation = "session:\(String(sid.prefix(128)))"
+        } else if let first = firstUserKey(messages) {
+            conversation = "first:\(first)"
+        } else {
+            conversation = nil
+        }
+
+        if let conversation, let cid = hex32(kind: "conversation", key: conversation) {
             headers["X-Conversation-ID"] = cid
         } else {
             headers["X-Conversation-ID"] = request
         }
-        if let last = lastUserKey(messages), let tid = hex32(kind: "turn", key: "\(firstUserKey(messages) ?? "")|\(last)") {
+        if let last = lastUserKey(messages),
+           let tid = hex32(kind: "turn", key: "\(conversation ?? "")|\(last)") {
             headers["X-Conversation-Request-ID"] = tid
         } else {
             headers["X-Conversation-Request-ID"] = request
@@ -355,21 +378,22 @@ final class WorkBuddyOAuthManager: ObservableObject {
     /// the conversation/turn ids are derived from its messages so the whole
     /// chat is ONE conversation to WorkBuddy (see WorkBuddyConversationID).
     func conversationHeaders(instanceId: String, site: WorkBuddySite,
-                             body: [String: Any]) -> [String: String] {
-        Self.makeConversationHeaders(instanceId: instanceId, site: site, body: body)
+                             body: [String: Any], sessionId: String? = nil) -> [String: String] {
+        Self.makeConversationHeaders(instanceId: instanceId, site: site, body: body, sessionId: sessionId)
     }
 
     /// Nonisolated core so per-request header callbacks (invoked on arbitrary
     /// executors inside the networking layer) can build the header set
     /// without hopping to the main actor.
     nonisolated static func makeConversationHeaders(instanceId: String, site: WorkBuddySite,
-                                                     body: [String: Any] = [:]) -> [String: String] {
+                                                     body: [String: Any] = [:],
+                                                     sessionId: String? = nil) -> [String: String] {
         // [T-workbuddy-stable-conversation-id] Swap the all-random ids for ids
         // derived from the chat. Message/request ids stay per-call random;
         // conversation/turn ids are stable, which is what stops WorkBuddy from
         // splitting one chat into many "用户请求数据处理" rows and rate-limiting
         // us after a handful of requests (as the Apelin/kwwk client does not).
-        var headers = WorkBuddyConversationID.headers(forBody: body)
+        var headers = WorkBuddyConversationID.headers(forBody: body, sessionId: sessionId)
         if let storage = ProviderKeychainHelper.loadOAuthToken(instanceId: instanceId, as: WorkBuddyTokenStorage.self) {
             for (key, value) in site.accountHeaders(
                 uid: storage.uid, domain: storage.domain, enterpriseId: storage.enterpriseId
