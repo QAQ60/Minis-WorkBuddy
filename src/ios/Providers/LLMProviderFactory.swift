@@ -433,6 +433,18 @@ enum LLMProviderFactory {
             instanceId: instance.id, customBaseURL: instance.effectiveCustomBaseURL
         )
         let iid = instance.id
+        // [T-workbuddy-non-reasoning-models] Override the capability from kwwk's
+        // bundled list at BUILD time too, not only when the catalog is fetched:
+        // models already saved in provider-config.db still carry the old
+        // `supportsReasoning = nil`, which the thinking resolver reads as true
+        // and injects `thinking:{...}` — a bodyless 429 on these paid models.
+        // The official client sends no thinking field for them. A value copy is
+        // enough (LLMModel is a struct); the stored config is left untouched.
+        var model = model
+        if WorkBuddyModelsAPI.nonReasoningModelIDs.contains(model.id) {
+            model.supportsReasoning = false
+            model.reasoningEffortValues = nil
+        }
         // A user-supplied base is a proxy in front of the same site, so the
         // site still decides the headers and the `/v2` path shape, but the
         // HOST must be theirs — it is the whole point of the field. The

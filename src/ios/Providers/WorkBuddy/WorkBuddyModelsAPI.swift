@@ -14,6 +14,22 @@ enum WorkBuddyModelsAPI {
         let detail: String?
     }
 
+    /// WorkBuddy models the official client treats as non-reasoning: it sends
+    /// NO thinking/reasoning field for them, even where the live config claims
+    /// `supportsReasoning: true` and lists effort tiers. Mirrors kwwk's bundled
+    /// `workbuddy-models.json` / `workbuddy-ai-models.json` rows with
+    /// `"reasoning": false`. New models default to the config's claim (nil →
+    /// resolver treats as reasoning), same as kwwk's "usable fallback" row.
+    static let nonReasoningModelIDs: Set<String> = [
+        // China plan (workbuddy-models.json)
+        "auto", "deepseek-v4.1-flash", "glm-5.1", "glm-5v-turbo",
+        "minimax-m3", "kimi-k2.7", "kimi-k2.6",
+        // International plan (workbuddy-ai-models.json)
+        "default-model", "fast-model", "balanced-model", "primary-model",
+        "deep-model", "gpt-5.5", "gpt-5.4", "gpt-5.3-codex",
+        "gemini-3.1-pro", "gemini-3.5-flash", "kimi-k3",
+    ]
+
     /// Fetch the live catalog for an authenticated instance.
     /// `accessToken` comes from `WorkBuddyOAuthManager.validAccessToken`.
     static func fetchModels(accessToken: String, site: WorkBuddySite) async throws -> Catalog {
@@ -122,6 +138,18 @@ enum WorkBuddyModelsAPI {
             // (`.vision`) — the same wrong claim by a different route.
             let declaresImages = (detail["supportsImages"] as? NSNumber)?.boolValue ?? false
             let images = declaresImages && !textOnly(site: site, id: entry.id)
+            // [T-workbuddy-non-reasoning-models] WorkBuddy's live config marks
+            // several models `supportsReasoning: true` (and offers effort tiers)
+            // even though the official client treats them as NON-reasoning and
+            // sends NO thinking/reasoning field at all — kwwk's bundled catalog
+            // (the engine Apelin uses) has `reasoning: false` for them. Minis
+            // trusted the config, left `supportsReasoning` nil, and the thinking
+            // resolver defaults nil→true — so it injected `thinking:{...}` into
+            // exactly these models. WorkBuddy's gateway answers those paid
+            // requests with a bodyless 429; the same model without the field
+            // (as the official app sends it) works. Set the capability from the
+            // SAME list kwwk uses so the resolver skips injection for them.
+            let nonReasoning = Self.nonReasoningModelIDs.contains(entry.id)
             var model = LLMModel(
                 id: entry.id,
                 displayName: names[index],
@@ -129,7 +157,8 @@ enum WorkBuddyModelsAPI {
                 modalityOverride: modality(images: images),
                 contextWindow: positiveInt(detail["maxInputTokens"]),
                 maxOutputTokens: positiveInt(detail["maxOutputTokens"]),
-                reasoningEffortValues: effortTiers(from: detail)
+                supportsReasoning: nonReasoning ? false : nil,
+                reasoningEffortValues: nonReasoning ? nil : effortTiers(from: detail)
             )
             // The config is this endpoint's own statement about this account,
             // which is what `limitsReportedByEndpoint` exists to mark: the
