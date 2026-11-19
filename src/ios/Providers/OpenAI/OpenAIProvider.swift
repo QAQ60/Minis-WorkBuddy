@@ -702,7 +702,8 @@ final class OpenAIProvider: LLMProvider {
         guard (200..<300).contains(statusCode) else {
             let body = String(data: data, encoding: .utf8) ?? ""
             throw mapHTTPError(statusCode: statusCode, body: body,
-                               retryAfter: http?.value(forHTTPHeaderField: "Retry-After"))
+                               retryAfter: http?.value(forHTTPHeaderField: "Retry-After"),
+                               headers: Self.responseHeaders(http))
         }
 
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
@@ -781,7 +782,8 @@ final class OpenAIProvider: LLMProvider {
             for try await line in byteStream.lines { body += line }
             session.finishTasksAndInvalidate()
             throw mapHTTPError(statusCode: statusCode, body: body,
-                               retryAfter: http?.value(forHTTPHeaderField: "Retry-After"))
+                               retryAfter: http?.value(forHTTPHeaderField: "Retry-After"),
+                               headers: Self.responseHeaders(http))
         }
 
         return AsyncThrowingStream { continuation in
@@ -1189,7 +1191,8 @@ final class OpenAIProvider: LLMProvider {
             for try await line in byteStream.lines { body += line }
             session.finishTasksAndInvalidate()
             let mapped = mapHTTPError(statusCode: statusCode, body: body,
-                                      retryAfter: http?.value(forHTTPHeaderField: "Retry-After"))
+                                      retryAfter: http?.value(forHTTPHeaderField: "Retry-After"),
+                                      headers: Self.responseHeaders(http))
             // Carry the raw text alongside, so the mender can read the vendor's
             // business code and message instead of a rewritten sentence.
             throw RefusedBodyError(text: body, status: statusCode, underlying: mapped)
@@ -2005,7 +2008,8 @@ final class OpenAIProvider: LLMProvider {
             guard (200..<300).contains(statusCode) else {
                 let responseBody = String(data: data, encoding: .utf8) ?? ""
                 throw mapHTTPError(statusCode: statusCode, body: responseBody,
-                                   retryAfter: http?.value(forHTTPHeaderField: "Retry-After"))
+                                   retryAfter: http?.value(forHTTPHeaderField: "Retry-After"),
+                                   headers: Self.responseHeaders(http))
             }
 
             let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
@@ -2193,7 +2197,8 @@ final class OpenAIProvider: LLMProvider {
         guard (200..<300).contains(statusCode) else {
             let responseBody = String(data: data, encoding: .utf8) ?? ""
             throw mapHTTPError(statusCode: statusCode, body: responseBody,
-                               retryAfter: http?.value(forHTTPHeaderField: "Retry-After"))
+                               retryAfter: http?.value(forHTTPHeaderField: "Retry-After"),
+                               headers: Self.responseHeaders(http))
         }
 
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
@@ -2414,15 +2419,49 @@ final class OpenAIProvider: LLMProvider {
         return .providerError(message: error.localizedDescription)
     }
 
-    func mapHTTPError(statusCode: Int, body: String, retryAfter: String? = nil) -> LLMError {
+    /// Flatten URLResponse headers for the 429 diagnostic. Kept tiny and
+    /// non-throwing: a diagnostic must never turn a failed request into a crash.
+    static func responseHeaders(_ http: HTTPURLResponse?) -> [String: String]? {
+        guard let fields = http?.allHeaderFields as? [AnyHashable: Any] else { return nil }
+        var out: [String: String] = [:]
+        for (key, value) in fields {
+            out[String(describing: key)] = String(describing: value)
+        }
+        return out.isEmpty ? nil : out
+    }
+
+    func mapHTTPError(statusCode: Int, body: String, retryAfter: String? = nil,
+                      headers: [String: String]? = nil) -> LLMError {
         if statusCode == 401 || statusCode == 403 { return .invalidAPIKey(detail: "HTTP \(statusCode): \(String(body.prefix(200)))") }
         // [T-rate-limit-detail] Keep the gateway's own words. This used to be
         // `return .rateLimited`, throwing away a body that distinguishes a
         // spent credit pool from a concurrency cap from a per-minute cap —
         // so every one of them read "Rate limited — please try again later".
         if statusCode == 429 {
+            // [T-workbuddy-429-diag] A bodyless 429 (WorkBuddy paid models)
+            // says nothing on its own. The gateway's response headers —
+            // Retry-After, ratelimit-*, x-request-id, server — are the only
+            // remaining evidence of WHY it refused. Surface them in the error
+            // so one install reveals the cause without another guess.
+            var detail = RateLimitDetail.describe(body: body)
+            if let headers, !headers.isEmpty {
+                let interesting = headers
+                    .filter { name, _ in
+                        let n = name.lowercased()
+                        return n == "retry-after" || n.contains("ratelimit") || n.contains("rate-limit")
+                            || n == "x-request-id" || n == "server" || n.contains("quota")
+                            || n.contains("credit") || n.contains("limit")
+                    }
+                    .sorted { $0.key < $1.key }
+                    .map { "\($0.key)=\($0.value)" }
+                    .joined(separator: " · ")
+                if !interesting.isEmpty { detail += " | headers: \(interesting)" }
+                // Log it too: the UI banner can truncate, but the exported
+                // debug log keeps the full line.
+                logger.error("[429-DIAG] status=\(statusCode) headers=[\(headers.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " · "))] body=\(String(body.prefix(300)))")
+            }
             return .rateLimited(
-                detail: RateLimitDetail.describe(body: body),
+                detail: detail,
                 retryAfter: RateLimitDetail.parseRetryAfter(retryAfter)
             )
         }
