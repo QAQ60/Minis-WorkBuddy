@@ -22,7 +22,19 @@ import CryptoKit
 enum WorkBuddyConversationID {
     /// 32 lowercase hex digits from SHA256(salt | kind | key), or nil when
     /// `key` is empty (so we never send a stable id for an empty chat).
-    private static let salt = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+    /// [T-workbuddy-persistent-salt] The salt MUST survive app restarts: a
+    /// fresh per-process salt made the same chat's X-Conversation-ID change on
+    /// every cold launch, so WorkBuddy opened a brand-new (uncached, fully
+    /// billed) conversation each time. Persist it in UserDefaults.
+    private static let salt: String = {
+        let key = "workbuddy.conversation.salt"
+        if let saved = UserDefaults.standard.string(forKey: key), !saved.isEmpty {
+            return saved
+        }
+        let fresh = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        UserDefaults.standard.set(fresh, forKey: key)
+        return fresh
+    }()
     private static func hex32(kind: String, key: String) -> String? {
         guard !key.isEmpty else { return nil }
         let digest = SHA256.hash(data: Data("\(salt)|\(kind)|\(key)".utf8))

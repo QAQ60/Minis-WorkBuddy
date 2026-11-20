@@ -53,6 +53,14 @@ enum WorkBuddyModelsAPI {
         // The legacy id plus any tier suffix the plan appends to it
         // (`deepseek-v4.1-flash-high` and friends) is the same model.
         if lid.hasPrefix("deepseek-v4.1-flash") { return true }
+        // [T-workbuddy-flash-family-nonreasoning] The whitelist above is a
+        // snapshot and keeps missing newly-added cheap models. Every "flash"
+        // model in the WorkBuddy catalog is a fast NON-reasoning tier — the
+        // official client sends no thinking field for any of them. Missing
+        // `glm-5.3-flash` here left supportsReasoning nil, so the resolver
+        // injected thinking:{"type":"disabled"}, fattened the paid output and
+        // triggered bodyless 429s. Match the whole family by name instead.
+        if lid.contains("flash") { return true }
         return false
     }
 

@@ -158,7 +158,16 @@ extension AIChatViewModel {
                 // degradation; cap at 6 so a typical 6-member sub group can be
                 // exhausted before the first-message fallback, without letting
                 // a huge model pool spin forever.
-                let tries = Array(candidates.prefix(6))
+                // [T-titlegen-min-credits] A session title is a nicety; the
+                // old prefix(6) could spend up to 6 model calls × 3 attempts,
+                // and Tier 3 dragged in EVERY configured provider (including
+                // unrelated Anthropic/OpenAI keys). On a free/cheap WorkBuddy
+                // chat that silently billed the paid sub-model — the source of
+                // the "-9.53 on hy4-flash-free" charge. Try exactly ONE
+                // candidate (the session's own cheapest bound model); if it
+                // fails for any reason, fall back to the local first-message
+                // title instead of burning more account credits.
+                let tries = Array(candidates.prefix(1))
                 var trimmed = ""
                 var category: String? = nil
                 var folderName: String? = nil
