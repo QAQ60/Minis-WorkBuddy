@@ -156,6 +156,29 @@ enum WorkBuddyBodyMend {
     static func apply(to body: inout [String: Any]) {
         mendMessages(&body)
         mendToolChoice(&body)
+        stripUnmodelledFields(&body)
+    }
+
+    /// OpenAI keys WorkBuddy's gateway does not model. The official client
+    /// sends none of them, and the gateway's admission layer reads the body
+    /// before the model does — an unknown key has been enough to turn a chat
+    /// the same account serves from the official app into a bare refusal.
+    /// `stream_options` is already removed by `requiresStreaming`; the list
+    /// here is everything else Minis can attach that the reference client
+    /// (kwwk) never sends.
+    ///
+    /// Deliberately NOT stripped: `reasoning` / `thinking` / `reasoning_effort`
+    /// (reasoning models need them — the non-reasoning case is handled by the
+    /// `stripsThinking` flag at the call site) and `response_format` (title
+    /// generation asks for JSON with it).
+    private static let unmodelledFields: [String] = [
+        "store", "metadata", "service_tier", "prompt_cache_key",
+        "parallel_tool_calls", "user", "logprobs", "top_logprobs",
+        "logit_bias", "n", "seed", "prediction", "modalities", "audio",
+    ]
+
+    private static func stripUnmodelledFields(_ body: inout [String: Any]) {
+        for field in unmodelledFields { body.removeValue(forKey: field) }
     }
 
     /// Ensure the first message is a system prompt.
@@ -412,5 +435,90 @@ enum WorkBuddyRefusalMend {
             return parts.compactMap { $0["text"] as? String }.joined(separator: "\n")
         }
         return ""
+    }
+}
+
+// MARK: - Request pacing
+/// Serialises WorkBuddy traffic per signed-in instance and holds a cooldown
+/// after the gateway answers 429.
+///
+/// [T-workbuddy-pacer] Why this exists: WorkBuddy's front door (APISIX) answers
+/// a paid model with a BODYLESS 429 that carries no `ratelimit-*` header — the
+/// shape of a concurrency / request-rate cap, not a credit refusal. A spent
+/// credit pool answers `14018` WITH a body ("Credits exhausted…"), and a
+/// restricted account answers `403 11140`; neither is what Minis receives.
+///
+/// The same account, in the official client and in Apelin (kwwk), keeps
+/// working, and Minis' own usage detail fills with one "用户请求数据处理" row
+/// per upstream request. Minis sends more upstream requests per user send than
+/// the reference client does: the chat itself, the session-title call right
+/// after it, and an immediate re-send when the user taps 重试. Pacing them —
+/// and honouring Retry-After instead of retrying into the same window — is what
+/// keeps one account inside the budget the official client stays inside.
+///
+/// This is deliberately a client-side smoothing, not a fix for the gateway:
+/// nothing here changes what the request says, only when it is sent.
+actor WorkBuddyPacer {
+    static let shared = WorkBuddyPacer()
+
+    /// Minimum gap between two upstream requests of one instance. The title
+    /// call that follows a chat is the case this exists for: it used to leave
+    /// back-to-back with the chat's last chunk.
+    static let minimumGap: TimeInterval = 1.0
+
+    /// Cooldown used when a 429 names no Retry-After (WorkBuddy's bodyless 429
+    /// never does).
+    static let defaultCooldown: TimeInterval = 60
+
+    /// A cooldown the gateway does name is honoured up to this ceiling, so a
+    /// stray "reset at 23:59" cannot park the account for a day.
+    static let maximumCooldown: TimeInterval = 30 * 60
+
+    private var lastStart: [String: Date] = [:]
+    private var cooldownUntil: [String: Date] = [:]
+
+    /// Wait until this instance may send: past its cooldown, and at least
+    /// `minimumGap` after the previous request started.
+    /// Hold this request until `minimumGap` has passed since the previous one.
+    ///
+    /// Deliberately does NOT wait out a cooldown: a request that arrives during
+    /// one should fail at once with a message naming the wait, not hang for a
+    /// minute. The caller checks `cooldownRemaining` and throws.
+    func wait(instanceId: String) async {
+        // The token is read more than once on some request paths (headers and
+        // body are assembled separately). Those repeats belong to the SAME
+        // request, so they must not each pay the gap.
+        let now = Date()
+        if let last = lastStart[instanceId], now.timeIntervalSince(last) < 0.2 {
+            return
+        }
+        if let last = lastStart[instanceId] {
+            let delay = last.addingTimeInterval(Self.minimumGap).timeIntervalSince(now)
+            if delay > 0 {
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(min(delay, 5) * 1_000_000_000))
+                } catch {
+                    return
+                }
+            }
+        }
+        lastStart[instanceId] = Date()
+    }
+
+    /// The gateway refused with 429: hold this instance's next request until
+    /// `retryAfter` seconds have passed (or the default cooldown). The longest
+    /// outstanding hold wins, so concurrent refusals cannot shorten it.
+    func rateLimited(instanceId: String, retryAfter: TimeInterval?) {
+        let requested = retryAfter ?? Self.defaultCooldown
+        let seconds = min(max(requested, 1), Self.maximumCooldown)
+        let until = Date().addingTimeInterval(seconds)
+        if let existing = cooldownUntil[instanceId], existing >= until { return }
+        cooldownUntil[instanceId] = until
+    }
+
+    /// Seconds left before this instance may send again; 0 when it may send.
+    func cooldownRemaining(instanceId: String) -> TimeInterval {
+        guard let until = cooldownUntil[instanceId] else { return 0 }
+        return max(0, until.timeIntervalSinceNow)
     }
 }

@@ -441,10 +441,20 @@ enum LLMProviderFactory {
         // The official client sends no thinking field for them. A value copy is
         // enough (LLMModel is a struct); the stored config is left untouched.
         var model = model
-        if WorkBuddyModelsAPI.nonReasoningModelIDs.contains(model.id) {
+        if WorkBuddyModelsAPI.isNonReasoning(model.id) {
             model.supportsReasoning = false
             model.reasoningEffortValues = nil
         }
+        // [T-workbuddy-no-thinking-nonreasoning] The same decision, carried to
+        // the wire as a safety net. `supportsReasoning = false` stops
+        // `injectThinkingParams` at the call site, but the resolver's
+        // `.deepSeekSibling` rule still wrote `thinking:{"type":"disabled"}`
+        // for a model it matched by id, and any path that rebuilds the body
+        // can re-add the field. The official client sends NO thinking key for
+        // these models, and the gateway answers one with a bodyless 429 — so
+        // strip it here, on every WorkBuddy request, for every model not
+        // explicitly declared as reasoning.
+        let stripsThinking = WorkBuddyModelsAPI.isNonReasoning(model.id)
         // A user-supplied base is a proxy in front of the same site, so the
         // site still decides the headers and the `/v2` path shape, but the
         // HOST must be theirs — it is the whole point of the field. The
@@ -473,6 +483,15 @@ enum LLMProviderFactory {
             }
             provider.chatBodyDecorator = { body in
                 WorkBuddyBodyMend.apply(to: &body)
+                // [T-workbuddy-no-thinking-nonreasoning] Ran after the thinking
+                // injection (chatBodyDecorator is applied last in buildRequest),
+                // so this is what the gateway actually receives.
+                if stripsThinking {
+                    body.removeValue(forKey: "thinking")
+                    body.removeValue(forKey: "reasoning_effort")
+                    body.removeValue(forKey: "enable_thinking")
+                    body.removeValue(forKey: "thinking_budget")
+                }
             }
             // [T-workbuddy-refusal-mend] A refusal that is about what the chat
             // SAYS gets one retry on a mended body, mended by the same closure
@@ -480,6 +499,14 @@ enum LLMProviderFactory {
             // "错误码 11128" for a chat the gateway would have served.
             provider.refusableBodyMender = { body, refusal in
                 WorkBuddyRefusalMend.mend(&body, refusal: refusal)
+            }
+            // [T-workbuddy-pacer] WorkBuddy's bodyless 429 names no reason and
+            // no delay. Record the refusal so the next request of this account
+            // waits instead of hammering the same window; the token closure
+            // below is where that wait is applied (it runs once per request).
+            provider.onFailureStatus = { status, retryAfter in
+                guard status == 429 else { return }
+                Task { await WorkBuddyPacer.shared.rateLimited(instanceId: iid, retryAfter: retryAfter) }
             }
         }
 
@@ -496,7 +523,26 @@ enum LLMProviderFactory {
         }
 
         let provider = OpenAIProvider(
-            oauthTokenProvider: { try await WorkBuddyOAuthManager.shared.validAccessToken(instanceId: iid) },
+            oauthTokenProvider: {
+                // [T-workbuddy-pacer] This closure runs once per upstream
+                // request (getToken), which makes it the one place both halves
+                // of the pacing apply. Nothing about the request changes —
+                // only when it leaves.
+                //
+                // A request that arrives inside the cooldown fails immediately
+                // with the wait named, instead of hanging and then hitting the
+                // same 429 again: the user gets "还需 N 秒" rather than a
+                // spinner that ends where it started.
+                let cooling = await WorkBuddyPacer.shared.cooldownRemaining(instanceId: iid)
+                if cooling > 1 {
+                    throw LLMError.rateLimited(
+                        detail: "WorkBuddy 限流冷却中，还需 \(Int(cooling.rounded(.up))) 秒",
+                        retryAfter: cooling
+                    )
+                }
+                await WorkBuddyPacer.shared.wait(instanceId: iid)
+                return try await WorkBuddyOAuthManager.shared.validAccessToken(instanceId: iid)
+            },
             model: model
         )
         configure(provider)

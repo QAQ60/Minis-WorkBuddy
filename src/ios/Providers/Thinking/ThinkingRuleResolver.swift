@@ -652,6 +652,19 @@ enum ThinkingRuleResolver {
             return (requested, clamped)
 
         case .deepSeekSibling:
+            // [T-workbuddy-no-thinking-nonreasoning] A model the catalog says
+            // cannot reason gets NO thinking key at all — the shape the official
+            // WorkBuddy client sends, and the only shape its gateway serves for
+            // these paid models (it answers any `thinking:{…}` with a bodyless
+            // 429). This branch used to write `thinking:{"type":"disabled"}`
+            // for every id it matched, even when `supportsReasoning == false`,
+            // so marking the model non-reasoning upstream changed nothing on
+            // the wire.
+            guard ctx.supportsReasoning != false else {
+                gateEvents.append(ThinkingGateEvent(
+                    id: "non-reasoning-model", evidence: .modelCapability, verdict: "emitNothing"))
+                return (nil, nil)
+            }
             if ctx.level.isEnabled {
                 let requested = OpenAIAgentProvider.wireEffort(for: ctx.level)
                 let clamped = OpenAIAgentProvider.clampEffort(requested, to: ctx.declaredEffortValues)

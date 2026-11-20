@@ -30,6 +30,32 @@ enum WorkBuddyModelsAPI {
         "gemini-3.1-pro", "gemini-3.5-flash", "kimi-k3",
     ]
 
+    /// [T-workbuddy-flash-id-alias] Whether WorkBuddy treats this model as
+    /// non-reasoning — the question the exact set above can no longer answer
+    /// on its own.
+    ///
+    /// The plan renamed DeepSeek's cheapest paid model from
+    /// `deepseek-v4.1-flash` to the bare `deepseek-flash` (kwwk's
+    /// T-deepseek-flash-scope records the same rename: "DeepSeek now
+    /// recommends the bare `deepseek-flash`; `deepseek-v4-flash` is kept only
+    /// as a legacy alias"). A config answering the new id matched NOTHING in
+    /// the set, so `supportsReasoning` stayed nil, the thinking resolver read
+    /// nil as "allowed", injected `thinking:{"type":"disabled"}`, and the
+    /// gateway answered the paid request with its bodyless 429 — the exact
+    /// failure the set was added to prevent, reached through a different id.
+    ///
+    /// The prefix therefore carries the family: every `deepseek-flash*` is the
+    /// same non-reasoning model under whichever name the plan is using today.
+    static func isNonReasoning(_ id: String) -> Bool {
+        let lid = id.lowercased()
+        if nonReasoningModelIDs.contains(lid) { return true }
+        if lid.hasPrefix("deepseek-flash") { return true }
+        // The legacy id plus any tier suffix the plan appends to it
+        // (`deepseek-v4.1-flash-high` and friends) is the same model.
+        if lid.hasPrefix("deepseek-v4.1-flash") { return true }
+        return false
+    }
+
     /// Fetch the live catalog for an authenticated instance.
     /// `accessToken` comes from `WorkBuddyOAuthManager.validAccessToken`.
     static func fetchModels(accessToken: String, site: WorkBuddySite) async throws -> Catalog {
@@ -149,7 +175,7 @@ enum WorkBuddyModelsAPI {
             // requests with a bodyless 429; the same model without the field
             // (as the official app sends it) works. Set the capability from the
             // SAME list kwwk uses so the resolver skips injection for them.
-            let nonReasoning = Self.nonReasoningModelIDs.contains(entry.id)
+            let nonReasoning = Self.isNonReasoning(entry.id)
             var model = LLMModel(
                 id: entry.id,
                 displayName: names[index],

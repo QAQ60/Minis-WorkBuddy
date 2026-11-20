@@ -95,9 +95,13 @@ enum WorkBuddyConversationID {
 
         if let conversation, let cid = hex32(kind: "conversation", key: conversation) {
             headers["X-Conversation-ID"] = cid
-        } else {
-            headers["X-Conversation-ID"] = request
         }
+        // [T-workbuddy-no-madeup-conversation] Nothing names the conversation
+        // (no session yet, and no user text to derive one from) ⇒ send NO
+        // conversation id at all, exactly as kwwk does. A made-up one is "a
+        // conversation of the request's own", which is what splits one chat
+        // into many "用户请求数据处理" rows and spends the account's request
+        // budget N times over.
         if let last = lastUserKey(messages),
            let tid = hex32(kind: "turn", key: "\(conversation ?? "")|\(last)") {
             headers["X-Conversation-Request-ID"] = tid

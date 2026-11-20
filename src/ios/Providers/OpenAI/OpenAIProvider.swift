@@ -198,6 +198,15 @@ final class OpenAIProvider: LLMProvider {
     /// the last refusal, goes up as it came.
     var refusableBodyMender: (@Sendable (inout [String: Any], _ refusal: String) -> Bool)?
 
+    /// [T-workbuddy-pacer] Called with the status of a FAILED request, so a
+    /// provider can pace itself against a gateway whose 429 carries neither a
+    /// body nor a `ratelimit-*` header. Only 429 is reported today; `retryAfter`
+    /// is the header's value in seconds when the gateway named one.
+    ///
+    /// Installed by `LLMProviderFactory.makeWorkBuddyProvider`; nil everywhere
+    /// else, so no other provider pays for it.
+    var onFailureStatus: (@Sendable (Int, TimeInterval?) -> Void)?
+
     /// [T-model-use-image-passthrough GH#62] Arbitrary extra fields merged into the
     /// /images/generations JSON body, so `minis-model-use` can pass provider-specific
     /// params our fixed schema never modeled (e.g. Volcengine Seedream's `image` for
@@ -2460,9 +2469,15 @@ final class OpenAIProvider: LLMProvider {
                 // debug log keeps the full line.
                 logger.error("[429-DIAG] status=\(statusCode) headers=[\(headers.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " · "))] body=\(String(body.prefix(300)))")
             }
+            let parsedRetryAfter = RateLimitDetail.parseRetryAfter(retryAfter)
+            // [T-workbuddy-pacer] A provider that installed this hook uses it
+            // to hold its next request instead of walking straight back into
+            // the same window — WorkBuddy's bodyless 429 names no reason and
+            // no retry delay, so the client has to supply both.
+            onFailureStatus?(statusCode, parsedRetryAfter)
             return .rateLimited(
                 detail: detail,
-                retryAfter: RateLimitDetail.parseRetryAfter(retryAfter)
+                retryAfter: parsedRetryAfter
             )
         }
 
