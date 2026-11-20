@@ -204,7 +204,36 @@ final class WorkBuddyOAuthManager: ObservableObject {
               let authURL = URL(string: authURLString) else {
             throw LLMError.providerError(message: "WorkBuddy: 登录页申请失败（\(started.errorDescription ?? "未知错误")）")
         }
-        present(LoginPagePresentation(authURL: authURL, site: site))
+        // [T-workbuddy-login-version] Tell the page which client is signing in,
+        // and give it a session of its own — byte-for-byte what kwwk does.
+        //
+        // The page decides what kind of token to issue from these two. Without
+        // `version` it signs in the WEB build, and that token is billed against
+        // the CodeBuddy plan's monthly pool (500 credits) rather than
+        // WorkBuddy's own. Once those 500 are spent the gateway answers
+        // `code 14018 "额度已用尽…购买加量包"` on every chat, even though the
+        // account still shows a large bonus-credit balance — the exact split
+        // in codebuddy.cn's 套餐与用量 page (基础积分 500/500 已用，平台奖励积分
+        // 仍有余额). Apelin, which sends `version`, keeps working on the bonus
+        // pool, and so does a relay key: neither lands in the plan's pool.
+        //
+        // The rest of the query is left as WorkBuddy encoded it: read decoded
+        // and written back, a `%2B` in `state` would go out as `+`, which the
+        // page reads as a space.
+        var pageURL = authURL
+        if var page = URLComponents(url: authURL, resolvingAgainstBaseURL: false) {
+            let ours = [
+                URLQueryItem(name: "version", value: WorkBuddySite.appVersion),
+                URLQueryItem(
+                    name: "loginSessionId",
+                    value: UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+                ),
+            ]
+            page.percentEncodedQueryItems = (page.percentEncodedQueryItems ?? [])
+                .filter { item in !ours.contains { $0.name == item.name } } + ours
+            pageURL = page.url ?? authURL
+        }
+        present(LoginPagePresentation(authURL: pageURL, site: site))
 
         // 2. Poll the token until the user approves in the browser.
         let deadline = Date().addingTimeInterval(loginTimeout)
@@ -288,6 +317,14 @@ final class WorkBuddyOAuthManager: ObservableObject {
             method: "POST",
             headers: site.clientHeaders.merging([
                 "X-Refresh-Token": refreshToken,
+                // [T-workbuddy-refresh-source] kwwk sends this on every renewal;
+                // Minis did not. The source decides which client the renewed
+                // token is issued to, and with it which credit pool the token's
+                // chats are billed against — the plugin's own, or the CodeBuddy
+                // plan's monthly 500 (which answers 14018 once spent). A token
+                // first issued without it keeps that fault across renewals, so
+                // fixing this only helps an account that signs in again.
+                "X-Auth-Refresh-Source": "plugin",
                 "Content-Type": "application/json",
             ]) { _, new in new },
             body: [:]
