@@ -901,9 +901,16 @@ enum QuotaConsoleLink {
         // [T-workbuddy-quota] The account page the plan's own docs point at:
         // avatar › 个人中心 › 套餐与用量, which draws the same meter the adapter
         // reads (and the per-task detail the meter does not carry).
+        // [T-workbuddy-quota-link] Path is `/profile/usage`, not `/account/usage`.
+        // `account` is the gateway's API prefix, so a page URL under it comes
+        // back as `{"error_msg":"404 Route Not Found"}` from the edge instead of
+        // the SPA. `/profile/usage` is served by the usercenter app
+        // (assets.workbuddy.cn/web/usercenter/…), which is the page that draws
+        // the credit meter, and it is the same path the upstream 14018 error
+        // points at (www.codebuddy.cn/profile/usage).
         case .workBuddy:
-            raw = host.contains("workbuddy.ai") ? "https://www.workbuddy.ai/account/usage"
-                                                : "https://www.workbuddy.cn/account/usage"
+            raw = host.contains("workbuddy.ai") ? "https://www.workbuddy.ai/profile/usage"
+                                                : "https://www.workbuddy.cn/profile/usage"
         case .siliconFlow, .geminiAPIKey, .geminiCodeAssist, .antigravity, .xAI, .githubCopilot,
              .customRelay, .unknown:
             raw = nil
